@@ -1,0 +1,416 @@
+{% extends "base.html" %}
+{% set y = summary.yard %}
+{% block title %}{{ y.code }} · {{ y.name }} · Wage Intelligence{% endblock %}
+{% block body %}
+
+<div class="min-h-screen bg-slate-50 text-slate-900">
+
+  {# ─── Sticky top bar (matches overview) ─── #}
+  <header class="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
+    <div class="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+      <div class="flex items-center gap-3 min-w-0">
+        <a href="{{ prefix }}/" class="flex items-center gap-2.5 group min-w-0">
+          <span class="inline-flex items-center justify-center h-8 w-8 rounded-lg bg-[color:var(--accent)] text-white text-sm font-bold tracking-tight shadow-sm">A</span>
+          <span class="flex flex-col leading-tight min-w-0">
+            <span class="text-[15px] font-semibold tracking-tight text-slate-900 truncate">ACME · Wage Intelligence</span>
+            <span class="text-[11px] text-slate-500 truncate">Yard dossier</span>
+          </span>
+        </a>
+      </div>
+
+      <nav class="hidden md:flex items-center gap-1 text-sm">
+        <a href="{{ prefix }}/" class="px-3 py-1.5 rounded-md text-slate-600 hover:text-slate-900 hover:bg-slate-50">Overview</a>
+        <a href="{{ prefix }}/methodology" class="px-3 py-1.5 rounded-md text-slate-600 hover:text-slate-900 hover:bg-slate-50">Methodology</a>
+        <a href="{{ prefix }}/admin" class="px-3 py-1.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-50">Admin</a>
+      </nav>
+
+      <div class="flex items-center gap-3">
+        <div class="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-xs text-emerald-800">
+          <span class="fresh-dot"></span>
+          <span class="font-semibold num">{{ total_observations }}</span>
+          <span class="text-emerald-700/80">live observations</span>
+          <span class="text-emerald-700/40">·</span>
+          <span>refreshed {{ last_observation_at | relative_time }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 pb-3 flex items-center gap-3 text-xs">
+      <span class="text-slate-500 font-medium uppercase tracking-wider">Role bucket</span>
+      <div class="inline-flex rounded-lg bg-slate-100 p-0.5">
+        <a href="{{ prefix }}/location/{{ y.code }}" class="px-3 py-1 rounded-md font-semibold transition {% if bucket == 'all' %}bg-white text-slate-900 shadow-sm{% else %}text-slate-600 hover:text-slate-900{% endif %}">All</a>
+        <a href="?bucket=outdoor" class="px-3 py-1 rounded-md font-semibold transition {% if bucket == 'outdoor' %}bg-white text-slate-900 shadow-sm{% else %}text-slate-600 hover:text-slate-900{% endif %}">Outdoor</a>
+        <a href="?bucket=indoor"  class="px-3 py-1 rounded-md font-semibold transition {% if bucket == 'indoor' %}bg-white text-slate-900 shadow-sm{% else %}text-slate-600 hover:text-slate-900{% endif %}">Indoor</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-10 space-y-8 lg:space-y-10">
+
+    <a href="{{ prefix }}/" class="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-900 transition">
+      <span aria-hidden="true">←</span> National overview
+    </a>
+
+    {# ─── Yard identity + headline gap ─── #}
+    <section class="grid gap-6 lg:grid-cols-[1.5fr_1fr] lg:items-end">
+      <div>
+        <div class="flex items-center gap-2 flex-wrap text-xs uppercase tracking-wider font-semibold text-slate-500">
+          <span class="num">{{ y.code }}</span>
+          <span class="text-slate-300">·</span>
+          <span class="num">{{ y.state }}</span>
+          {% if cbsa_title %}
+            <span class="text-slate-300">·</span>
+            <span class="pill pill-slate normal-case tracking-normal" title="CBSA {{ cbsa_code }}">{{ cbsa_title }}</span>
+          {% endif %}
+        </div>
+        <h1 class="text-3xl sm:text-4xl lg:text-5xl font-semibold tracking-tight text-slate-900 leading-tight mt-3">{{ y.name }}</h1>
+        <p class="mt-2 text-slate-500">
+          {{ y.city }}, {{ y.state }}
+          <span class="text-slate-300 mx-1">·</span>
+          <span class="num text-xs">{{ '%.3f' | format(y.lat) }}, {{ '%.3f' | format(y.lng) }}</span>
+        </p>
+      </div>
+
+      <div class="card p-5 sm:p-6">
+        <div class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">Wage gap · market &minus; ACME</div>
+        <div class="flex items-baseline gap-3 mt-2">
+          <span class="display-num text-5xl font-semibold
+            {% if summary.gap > 0 %}gap-neg{% elif summary.gap < 0 %}gap-pos{% else %}gap-flat{% endif %}">
+            {{ summary.gap | signed_money }}
+          </span>
+          <span class="text-sm text-slate-500">/ hr</span>
+        </div>
+        <div class="flex items-center gap-2 mt-3 flex-wrap">
+          {% if summary.gap > 0 %}
+            <span class="pill pill-rose">▲ Competitors pay more</span>
+          {% elif summary.gap < 0 %}
+            <span class="pill pill-emerald">▼ ACME leads</span>
+          {% else %}
+            <span class="pill pill-slate">— At parity / insufficient data</span>
+          {% endif %}
+          {% set pq = summary.pressure_quartile %}
+          <span class="pill {% if pq == 1 %}pill-rose{% elif pq == 2 %}pill-amber{% elif pq == 3 %}pill-emerald{% elif pq == 4 %}pill-sky{% else %}pill-slate{% endif %}">
+            {{ pq | pressure_label }}
+          </span>
+        </div>
+      </div>
+    </section>
+
+    {# ─── ACME pays vs Market pays ─── #}
+    <section class="grid gap-5 md:grid-cols-2">
+      <div class="card p-6">
+        <div class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">ACME pays</div>
+        <div class="flex items-baseline gap-2 mt-3">
+          <span class="display-num text-5xl font-semibold text-slate-900">{{ y.copart_wage | money }}</span>
+          <span class="text-sm text-slate-500">/ hr</span>
+        </div>
+        <div class="mt-5 pt-4 border-t border-slate-100 grid grid-cols-2 gap-4">
+          <div>
+            <div class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">RPP-equivalent</div>
+            <div class="num text-base font-semibold text-slate-700 mt-1">{{ summary.rpp_adjusted_copart_wage | money }}</div>
+          </div>
+          <div>
+            <div class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">State RPP</div>
+            <div class="num text-base font-semibold text-slate-700 mt-1">{{ '%.3f' | format(summary.rpp) }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card p-6">
+        <div class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">Local market · inverse-distance blended</div>
+        <div class="flex items-baseline gap-2 mt-3">
+          {% if summary.blended_competitive_wage %}
+            <span class="display-num text-5xl font-semibold gap-neg">{{ summary.blended_competitive_wage | money }}</span>
+            <span class="text-sm text-slate-500">/ hr</span>
+          {% else %}
+            <span class="display-num text-5xl font-semibold text-slate-300">—</span>
+          {% endif %}
+        </div>
+        <div class="mt-5 pt-4 border-t border-slate-100 grid grid-cols-2 gap-4">
+          <div>
+            <div class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">RPP-equivalent</div>
+            <div class="num text-base font-semibold text-slate-700 mt-1">
+              {% if summary.rpp_adjusted_blended_wage %}{{ summary.rpp_adjusted_blended_wage | money }}{% else %}—{% endif %}
+            </div>
+          </div>
+          <div>
+            <div class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">Observations</div>
+            <div class="num text-base font-semibold text-slate-700 mt-1">{{ summary.observation_count }}</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    {# ─── Map ─── #}
+    <section>
+      <div class="flex items-end justify-between mb-3 flex-wrap gap-2">
+        <h2 class="text-xl font-semibold tracking-tight text-slate-900">Competitor locations within 25 mi</h2>
+        <div class="flex items-center gap-4 text-xs text-slate-600">
+          <span class="flex items-center gap-1.5"><span class="inline-block w-2 h-2 rounded-full bg-[color:var(--accent)]"></span>ACME yard</span>
+          <span class="flex items-center gap-1.5"><span class="inline-block w-2 h-2 rounded-full bg-slate-900"></span>Competitor posting</span>
+        </div>
+      </div>
+      <div class="card overflow-hidden">
+        <div id="leaflet-map" style="height: 420px;"></div>
+      </div>
+    </section>
+
+    {# ─── Observed postings grouped by employer ─── #}
+    <section>
+      <div class="flex items-end justify-between mb-4 flex-wrap gap-3">
+        <div>
+          <h2 class="text-xl font-semibold tracking-tight text-slate-900">Observed postings</h2>
+          <p class="text-sm text-slate-500 mt-1">Grouped by employer; sorted by distance from this yard.</p>
+        </div>
+        <span class="text-xs text-slate-500">
+          <span class="num font-semibold text-slate-700">{{ summary.observation_count }}</span>
+          posting{% if summary.observation_count != 1 %}s{% endif %}
+        </span>
+      </div>
+
+      {% if summary.observations %}
+        {% set grouped = {} %}
+        {% set order = [] %}
+        {% for o in summary.observations %}
+          {% if o.competitor_name not in grouped %}
+            {% set _ = order.append(o.competitor_name) %}
+            {% set _ = grouped.update({o.competitor_name: []}) %}
+          {% endif %}
+          {% set _ = grouped[o.competitor_name].append(o) %}
+        {% endfor %}
+
+        <div class="space-y-5">
+        {% for emp in order %}
+          {% set rows = grouped[emp] %}
+          {% set midpoints = rows | map(attribute='midpoint_wage') | list %}
+          {% set emp_avg = (midpoints | sum) / (midpoints | length) %}
+          <div class="card overflow-hidden">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50">
+              <div class="flex items-baseline gap-3">
+                <div class="text-lg font-semibold text-slate-900">{{ emp }}</div>
+                <div class="text-xs text-slate-500 num">{{ rows | length }} posting{% if (rows | length) != 1 %}s{% endif %}</div>
+              </div>
+              <div class="text-right">
+                <div class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">Avg midpoint</div>
+                <div class="num text-sm font-semibold text-slate-900 mt-0.5">{{ emp_avg | money }}</div>
+              </div>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="text-left text-[10px] uppercase tracking-wider font-semibold text-slate-500 border-b border-slate-100">
+                    <th class="px-5 py-2.5">Bucket</th>
+                    <th class="px-3 py-2.5 text-right">Wage range</th>
+                    <th class="px-3 py-2.5 text-right">Midpoint</th>
+                    <th class="px-3 py-2.5 text-right">Distance</th>
+                    <th class="px-3 py-2.5">Source</th>
+                    <th class="px-3 py-2.5">Confidence</th>
+                    <th class="px-5 py-2.5"></th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                {% for o in rows %}
+                  <tr class="hover:bg-slate-50 transition">
+                    <td class="px-5 py-3">
+                      {% if o.bucket == 'outdoor' %}<span class="pill pill-amber">Outdoor</span>
+                      {% elif o.bucket == 'indoor' %}<span class="pill pill-sky">Indoor</span>
+                      {% else %}<span class="pill pill-slate">—</span>{% endif %}
+                    </td>
+                    <td class="px-3 py-3 text-right num text-slate-600">{{ o.wage_low | money }} – {{ o.wage_high | money }}</td>
+                    <td class="px-3 py-3 text-right num font-semibold text-slate-900">{{ o.midpoint_wage | money }}</td>
+                    <td class="px-3 py-3 text-right num text-slate-600">{{ '%.1f' | format(o.distance_miles) }} mi</td>
+                    <td class="px-3 py-3">
+                      {% if o.source_tier == 'employer_owned' %}<span class="pill pill-emerald">Employer site</span>
+                      {% elif o.source_tier == 'aggregator' %}<span class="pill pill-sky">Aggregator</span>
+                      {% elif o.source_tier == 'press' %}<span class="pill pill-amber">Press</span>
+                      {% else %}<span class="pill pill-slate">Sample</span>{% endif %}
+                    </td>
+                    <td class="px-3 py-3 min-w-[120px]">
+                      {% set conf = ((o.extraction_confidence or 0) * 100) | int %}
+                      <div class="flex items-center gap-2">
+                        <div class="flex-1 h-1 bg-slate-100 rounded-full overflow-hidden">
+                          <div class="h-full {% if conf >= 80 %}bg-emerald-500{% elif conf >= 60 %}bg-amber-500{% else %}bg-rose-500{% endif %}" style="width: {{ conf }}%"></div>
+                        </div>
+                        <span class="num text-xs text-slate-500 w-8 text-right">{{ conf }}%</span>
+                      </div>
+                    </td>
+                    <td class="px-5 py-3 text-right">
+                      {% if o.source_url %}
+                        <a href="{{ o.source_url }}" target="_blank" rel="noopener" class="text-xs font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap">view source ↗</a>
+                      {% else %}
+                        <span class="text-slate-300 text-xs">no link</span>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        {% endfor %}
+        </div>
+      {% else %}
+        <div class="card p-10 text-center text-slate-500 text-sm">
+          No competitor observations within the configured cutoff radius for this bucket.
+        </div>
+      {% endif %}
+    </section>
+
+    {# ─── BLS OEWS baseline ─── #}
+    <section>
+      <div class="flex items-end justify-between mb-4 flex-wrap gap-3">
+        <div>
+          <h2 class="text-xl font-semibold tracking-tight text-slate-900">BLS OEWS baseline · {{ y.state }} · 2023</h2>
+          <p class="text-sm text-slate-500 mt-1">Statewide occupation wage estimates from the Bureau of Labor Statistics — a separate anchor, not blended into the figure above.</p>
+        </div>
+        <span class="text-xs text-slate-500">{{ bls_rows | length }} occupation{% if (bls_rows | length) != 1 %}s{% endif %}</span>
+      </div>
+
+      {% if bls_rows %}
+        {% if bls_outdoor_p50 %}
+          {% set bls_acme_diff = bls_outdoor_p50 - summary.yard.copart_wage %}
+          <div class="card p-5 sm:p-6 mb-5">
+            <div class="grid sm:grid-cols-[1fr_auto_1fr] items-center gap-6">
+              <div>
+                <div class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">Outdoor median · BLS</div>
+                <div class="display-num text-3xl sm:text-4xl font-semibold text-slate-900 mt-2">{{ bls_outdoor_p50 | money }}</div>
+                <div class="text-xs text-slate-500 mt-1">/ hr</div>
+              </div>
+              <div class="text-slate-300 text-xs uppercase tracking-wider font-semibold text-center">vs</div>
+              <div class="sm:text-right">
+                <div class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">ACME pays</div>
+                <div class="display-num text-3xl sm:text-4xl font-semibold mt-2 {% if bls_acme_diff > 0 %}gap-neg{% elif bls_acme_diff < 0 %}gap-pos{% else %}text-slate-900{% endif %}">
+                  {{ summary.yard.copart_wage | money }}
+                </div>
+                <div class="text-xs text-slate-500 mt-1">/ hr</div>
+              </div>
+            </div>
+            <div class="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between text-xs">
+              <span class="text-slate-500 font-medium uppercase tracking-wider">Difference (BLS &minus; ACME)</span>
+              <span class="num text-sm font-semibold {% if bls_acme_diff > 0 %}gap-neg{% elif bls_acme_diff < 0 %}gap-pos{% else %}gap-flat{% endif %}">
+                {{ bls_acme_diff | signed_money }} / hr
+              </span>
+            </div>
+          </div>
+        {% endif %}
+
+        <div class="card overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-slate-50">
+                <tr class="text-left text-[10px] uppercase tracking-wider font-semibold text-slate-500 border-b border-slate-200">
+                  <th class="px-5 py-3">Bucket</th>
+                  <th class="px-3 py-3">Occ code</th>
+                  <th class="px-3 py-3">Occupation</th>
+                  <th class="px-3 py-3 text-right">p25</th>
+                  <th class="px-3 py-3 text-right">p50</th>
+                  <th class="px-3 py-3 text-right">p75</th>
+                  <th class="px-5 py-3 text-right">Mean</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+              {% for r in bls_rows %}
+                <tr class="hover:bg-slate-50 transition">
+                  <td class="px-5 py-3">
+                    {% if r.bucket == 'outdoor' %}<span class="pill pill-amber">Outdoor</span>
+                    {% elif r.bucket == 'indoor' %}<span class="pill pill-sky">Indoor</span>
+                    {% else %}<span class="pill pill-slate">—</span>{% endif %}
+                  </td>
+                  <td class="px-3 py-3 num text-slate-600 text-xs">{{ r.occ_code }}</td>
+                  <td class="px-3 py-3 text-slate-700">{{ r.occ_title }}</td>
+                  <td class="px-3 py-3 text-right num text-slate-600">{{ r.p25 | money }}</td>
+                  <td class="px-3 py-3 text-right num font-semibold text-slate-900">{{ r.p50 | money }}</td>
+                  <td class="px-3 py-3 text-right num text-slate-600">{{ r.p75 | money }}</td>
+                  <td class="px-5 py-3 text-right num text-slate-600">{{ r.mean_hourly | money }}</td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% else %}
+        <div class="card p-10 text-center text-slate-500 text-sm">No BLS OEWS baseline available for this jurisdiction.</div>
+      {% endif %}
+
+      <p class="text-xs text-slate-500 mt-4">
+        Source: Bureau of Labor Statistics · Occupational Employment &amp; Wage Statistics · May 2023 estimates ·
+        <a href="https://www.bls.gov/oes/tables.htm" target="_blank" rel="noopener" class="text-[color:var(--accent)] font-semibold underline">bls.gov/oes/tables ↗</a>
+      </p>
+    </section>
+
+    <footer class="pt-6 mt-6 border-t border-slate-200 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-3">
+      <a href="{{ prefix }}/" class="hover:text-slate-900 transition">← Back to overview</a>
+      <div>Last refreshed <span class="num">{{ last_observation_at | relative_time }}</span></div>
+      <a href="{{ prefix }}/methodology" class="hover:text-slate-900 transition">How is this measured? →</a>
+    </footer>
+  </main>
+</div>
+
+<script type="application/json" id="yard-json">{{ summary | tojson }}</script>
+<script>
+(function () {
+  function initMap() {
+    const el = document.getElementById('leaflet-map');
+    if (!el || typeof L === 'undefined') return;
+    const data = JSON.parse(document.getElementById('yard-json').textContent || '{}');
+    const y = data.yard;
+    if (!y || y.lat == null || y.lng == null) return;
+
+    const map = L.map('leaflet-map', { scrollWheelZoom: false }).setView([y.lat, y.lng], 10);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; OpenStreetMap &copy; CARTO',
+      subdomains: 'abcd', maxZoom: 19
+    }).addTo(map);
+
+    const yardMarker = L.circleMarker([y.lat, y.lng], {
+      radius: 12, color: '#B23A1B', weight: 3, fillColor: '#B23A1B', fillOpacity: 0.25
+    }).addTo(map);
+    yardMarker.bindTooltip(
+      `<strong>${y.code}</strong> · ${y.name}<br/>ACME — $${y.copart_wage.toFixed(2)}/hr`,
+      { direction: 'top', offset: [0, -4] }
+    );
+
+    const bounds = [[y.lat, y.lng]];
+
+    L.circle([y.lat, y.lng], {
+      radius: 25 * 1609.34,
+      color: '#0F172A', weight: 1, fillOpacity: 0.02, dashArray: '3 5'
+    }).addTo(map);
+    [5, 10, 15, 20].forEach(mi => {
+      L.circle([y.lat, y.lng], {
+        radius: mi * 1609.34,
+        color: '#0F172A', weight: 1, fillOpacity: 0, opacity: 0.06
+      }).addTo(map);
+    });
+
+    const obs = data.observations || [];
+    obs.forEach(o => {
+      if (o.distance_miles == null) return;
+      const seed = (o.posting_id || 0) * 2654435761 % 360;
+      const bearing = seed * Math.PI / 180;
+      const dMeters = o.distance_miles * 1609.34;
+      const dLat = (dMeters * Math.cos(bearing)) / 111320;
+      const dLng = (dMeters * Math.sin(bearing)) / (111320 * Math.cos(y.lat * Math.PI / 180));
+      const lat = y.lat + dLat;
+      const lng = y.lng + dLng;
+      bounds.push([lat, lng]);
+      const m = L.circleMarker([lat, lng], {
+        radius: 5, color: '#0F172A', weight: 1.5, fillColor: '#0F172A', fillOpacity: 0.6
+      }).addTo(map);
+      m.bindTooltip(
+        `<strong>${o.competitor_name}</strong><br/>$${o.midpoint_wage.toFixed(2)}/hr · ${o.distance_miles.toFixed(1)} mi`,
+        { direction: 'top', offset: [0, -2] }
+      );
+    });
+
+    if (bounds.length > 1) {
+      map.fitBounds(bounds, { padding: [30, 30], maxZoom: 11 });
+    }
+  }
+
+  if (document.readyState !== 'loading') setTimeout(initMap, 30);
+  else document.addEventListener('DOMContentLoaded', () => setTimeout(initMap, 30));
+})();
+</script>
+
+{% endblock %}

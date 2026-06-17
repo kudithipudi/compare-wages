@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% from "admin/_shell.html" import admin_shell, empty_state %}
+{% block title %}Admin · Role mappings{% endblock %}
+{% block body %}
+{% call admin_shell("role_mappings") %}
+
+  {% set buckets = ["outdoor", "indoor"] %}
+  {% set bucket_pill = {"outdoor": "amber", "indoor": "sky"} %}
+
+  <div x-data="{ open: false }">
+    <div class="flex flex-wrap items-end justify-between gap-4 pb-4 border-b border-slate-200">
+      <div>
+        <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900">Role mappings</h1>
+        <p class="text-sm text-slate-500 mt-1">
+          <span class="num">{{ rows|length }}</span> pairs
+          <span class="text-slate-300 mx-1">·</span>
+          map competitor job titles to Copart role buckets
+        </p>
+      </div>
+      <button @click="open = !open"
+              class="btn btn-primary">
+        <span x-text="open ? 'Close form' : '+ Add mapping'"></span>
+      </button>
+    </div>
+
+    <div x-show="open" x-cloak x-transition class="card p-5">
+      <form method="post" action="{{ prefix }}/admin/role-mappings" class="grid grid-cols-1 md:grid-cols-6 gap-4 text-sm">
+        <label class="field md:col-span-2">
+          <span class="field-label">Copart role</span>
+          <input name="copart_role" required placeholder="Yard Attendant" class="field-input" />
+        </label>
+        <label class="field md:col-span-2">
+          <span class="field-label">Competitor role</span>
+          <input name="competitor_role" required placeholder="Lot Associate" class="field-input" />
+        </label>
+        <label class="field md:col-span-2">
+          <span class="field-label">Competitor</span>
+          <select name="competitor_id" class="field-input bg-white">
+            <option value="">(all competitors — generic)</option>
+            {% for c in competitors %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Bucket</span>
+          <select name="bucket" class="field-input bg-white">
+            {% for b in buckets %}<option value="{{ b }}">{{ b }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="field md:col-span-2">
+          <span class="field-label">Confidence (0–1)</span>
+          <input name="confidence" type="number" step="0.01" min="0" max="1" value="0.8" required class="field-input num" />
+        </label>
+        <div class="md:col-span-6 flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+          <button type="button" @click="open = false" class="btn btn-ghost">Cancel</button>
+          <button type="submit" class="btn btn-accent">Create mapping</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {% if rows %}
+  <div class="card overflow-hidden">
+    <table class="text-sm w-full">
+      <thead class="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500">
+        <tr>
+          <th class="text-left font-semibold px-4 py-3">ID</th>
+          <th class="text-left font-semibold px-4 py-3">Copart role</th>
+          <th class="px-2 py-3"></th>
+          <th class="text-left font-semibold px-4 py-3">Competitor role</th>
+          <th class="text-left font-semibold px-4 py-3">Scope</th>
+          <th class="text-left font-semibold px-4 py-3">Bucket</th>
+          <th class="text-right font-semibold px-4 py-3">Confidence</th>
+          <th class="text-right font-semibold px-4 py-3 pr-5"></th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for r in rows %}
+        <tr class="hover-row align-middle">
+          <td class="px-4 py-3 num text-xs text-slate-400">#{{ r.id }}</td>
+          <td class="px-4 py-3 font-semibold text-slate-900">{{ r.copart_role }}</td>
+          <td class="px-2 py-3 text-slate-300">→</td>
+          <td class="px-4 py-3 text-slate-700">{{ r.competitor_role }}</td>
+          <td class="px-4 py-3">
+            {% if r.competitor_id and competitor_names.get(r.competitor_id) %}
+              <span class="pill pill-sky">{{ competitor_names[r.competitor_id] }}</span>
+            {% else %}
+              <span class="text-xs text-slate-400 italic">all competitors</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3">
+            <span class="pill pill-{{ bucket_pill.get(r.bucket, 'slate') }}">{{ r.bucket }}</span>
+          </td>
+          <td class="px-4 py-3 text-right">
+            {% set pct = (r.confidence * 100) | round | int %}
+            <div class="inline-flex items-center gap-2 justify-end">
+              <div class="w-20 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                <div class="h-full {% if pct >= 80 %}bg-emerald-500{% elif pct >= 60 %}bg-amber-500{% else %}bg-rose-500{% endif %}"
+                     style="width: {{ pct }}%"></div>
+              </div>
+              <span class="text-xs num w-10 text-right text-slate-700 font-medium">{{ pct }}%</span>
+            </div>
+          </td>
+          <td class="px-4 py-3 pr-5 text-right">
+            <form method="post" action="{{ prefix }}/admin/role-mappings/{{ r.id }}/delete"
+                  onsubmit="return confirm('Delete mapping {{ r.copart_role }} → {{ r.competitor_role }}?');"
+                  class="inline">
+              <button type="submit" class="text-xs font-semibold text-rose-600 hover:text-rose-800 hover:underline">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    {{ empty_state("No role mappings yet.", "Add a few mappings so extracted titles can be grouped.") }}
+  {% endif %}
+
+{% endcall %}
+{% endblock %}

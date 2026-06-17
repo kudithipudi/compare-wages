@@ -1,0 +1,291 @@
+/* Tiny stylesheet — keeps Tailwind for everything else. */
+:root {
+  --ink: #0B1220;
+  --slate: #1B2436;
+  --line: rgba(11, 18, 32, 0.08);
+  --rule: rgba(11, 18, 32, 0.14);
+  --paper: #F7F4EE;
+  --paper-2: #EFEAE0;
+  --accent: #B23A1B;
+}
+
+html, body { height: 100%; }
+body { letter-spacing: -0.005em; background: var(--paper); }
+
+.font-display { font-family: 'Fraunces', 'Iowan Old Style', Georgia, serif; font-feature-settings: 'ss01', 'ss02'; }
+.eyebrow { font-family: 'Inter', sans-serif; font-size: 0.6875rem; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 600; color: rgba(11, 18, 32, 0.55); }
+.rule { border-top: 1px solid var(--rule); }
+.rule-thick { border-top: 2px solid var(--ink); }
+.rule-l { border-left: 1px solid var(--rule); }
+.accent { color: var(--accent); }
+.bg-paper { background: var(--paper); }
+.bg-paper-2 { background: var(--paper-2); }
+.framed { border: 1px solid var(--rule); }
+.hairline { border: 1px solid var(--rule); }
+.figure-xl { font-feature-settings: 'lnum', 'tnum', 'ss01'; letter-spacing: -0.04em; line-height: 0.92; }
+.serif-num { font-family: 'Fraunces', Georgia, serif; font-variant-numeric: lining-nums tabular-nums; font-feature-settings: 'tnum', 'lnum'; }
+.dropcap::first-letter { font-family: 'Fraunces', Georgia, serif; font-weight: 600; float: left; font-size: 3.6rem; line-height: 0.85; padding: 0.35rem 0.5rem 0 0; color: var(--accent); }
+.tick { display:inline-block; width: 0.5rem; height: 1px; background: var(--ink); vertical-align: middle; margin: 0 0.4rem; opacity: 0.5; }
+.confbar { height: 3px; background: rgba(11,18,32,0.08); border-radius: 2px; overflow: hidden; }
+.confbar > span { display:block; height: 100%; background: var(--ink); }
+.q-pill { display:inline-flex; align-items:center; gap: 0.4rem; padding: 0.15rem 0.55rem; border-radius: 2px; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid var(--rule); background: rgba(255,255,255,0.6); }
+.q-dot { width: 0.5rem; height: 0.5rem; border-radius: 9999px; display:inline-block; }
+.nav-link { position: relative; padding: 0.25rem 0; }
+.nav-link.is-active::after { content:''; position:absolute; left:0; right:0; bottom:-6px; height: 2px; background: var(--ink); }
+.tabular { font-variant-numeric: tabular-nums; }
+.editorial-quote { quotes: "\201C" "\201D"; }
+.editorial-quote::before { content: open-quote; font-family: 'Fraunces', Georgia, serif; font-size: 3.5rem; line-height: 0; vertical-align: -0.55em; margin-right: 0.1em; color: var(--accent); }
+.leaflet-popup-content-wrapper { border-radius: 2px; }
+.bucket-seg { display:inline-flex; border: 1px solid var(--rule); background: rgba(255,255,255,0.7); border-radius: 2px; overflow: hidden; }
+.bucket-seg a { padding: 0.3rem 0.7rem; font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 500; color: var(--ink); }
+.bucket-seg a.is-active { background: var(--ink); color: var(--paper); }
+.bucket-seg a + a { border-left: 1px solid var(--rule); }
+.shadow-edit { box-shadow: 0 1px 0 rgba(11,18,32,0.04); }
+
+.num { font-variant-numeric: tabular-nums; font-family: 'JetBrains Mono', ui-monospace, monospace; }
+
+.divider { border-top: 1px solid var(--line); }
+
+.shell-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+}
+@media (min-width: 1024px) {
+  .shell-grid { grid-template-columns: 320px 1fr; }
+}
+
+.dot { display: inline-block; width: 0.625rem; height: 0.625rem; border-radius: 9999px; }
+
+.tag {
+  display: inline-flex; align-items: center; gap: 0.375rem;
+  padding: 0.125rem 0.5rem; border-radius: 9999px;
+  font-size: 0.75rem; line-height: 1rem; font-weight: 500;
+  border: 1px solid var(--line);
+  background: white;
+}
+
+.tag-good { background: #ECFDF5; color: #065F46; border-color: #A7F3D0; }
+.tag-bad { background: #FFF1F2; color: #9F1239; border-color: #FECDD3; }
+.tag-warm { background: #FFFBEB; color: #92400E; border-color: #FDE68A; }
+.tag-cool { background: #EFF6FF; color: #1E40AF; border-color: #BFDBFE; }
+
+#leaflet-map { height: 480px; border-radius: 0.875rem; }
+
+.tablespill { overflow-x: auto; }
+.tablespill table { min-width: 100%; }
+
+.hover-row:hover { background-color: rgba(14, 165, 233, 0.06); }
+
+details > summary { cursor: pointer; }
+details > summary::-webkit-details-marker { display: none; }
+
+/* ---------- Airbnb-inspired admin surface ---------- */
+
+/* Surface card — soft shadow + generous radius, sits on bg-slate-50. */
+.card {
+  background: #ffffff;
+  border: 1px solid rgb(226 232 240); /* slate-200 */
+  border-radius: 0.875rem; /* ~rounded-xl */
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 1px rgba(15, 23, 42, 0.03);
+  transition: box-shadow 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+.card-hover:hover {
+  box-shadow: 0 6px 16px -6px rgba(15, 23, 42, 0.12), 0 2px 4px rgba(15, 23, 42, 0.04);
+  border-color: rgb(203 213 225); /* slate-300 */
+}
+.card-ink {
+  background: var(--ink);
+  color: rgb(241 245 249); /* slate-100 */
+  border-radius: 0.875rem;
+  border: 1px solid rgba(255,255,255,0.06);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+/* Filter chip — toggle-able pill. */
+.chip {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.375rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.75rem; font-weight: 500;
+  background: #ffffff;
+  border: 1px solid rgb(226 232 240);
+  color: rgb(51 65 85); /* slate-700 */
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  user-select: none;
+}
+.chip:hover { background: rgb(248 250 252); border-color: rgb(203 213 225); }
+.chip-active {
+  background: var(--ink);
+  color: #fff;
+  border-color: var(--ink);
+}
+.chip-active:hover { background: #1B2436; }
+.chip-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.6875rem;
+  padding: 0 0.375rem;
+  border-radius: 9999px;
+  background: rgba(15, 23, 42, 0.06);
+  color: rgb(71 85 105);
+}
+.chip-active .chip-count { background: rgba(255,255,255,0.18); color: #fff; }
+
+/* Field — label/input pair with breathing room. */
+.field { display: block; }
+.field-label {
+  display: block;
+  font-size: 0.6875rem; letter-spacing: 0.12em; text-transform: uppercase;
+  font-weight: 600; color: rgb(100 116 139); /* slate-500 */
+  margin-bottom: 0.375rem;
+}
+.field-input {
+  width: 100%;
+  border: 1px solid rgb(203 213 225);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  background: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.field-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(178, 58, 27, 0.12);
+}
+
+/* Key/value pair for stat strips at the bottom of cards. */
+.kv {
+  display: flex; flex-direction: column; gap: 0.125rem;
+}
+.kv-k {
+  font-size: 0.625rem; letter-spacing: 0.1em; text-transform: uppercase;
+  font-weight: 600; color: rgb(100 116 139);
+}
+.kv-v {
+  font-size: 0.875rem; font-weight: 600; color: rgb(15 23 42);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Button primitives. */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+  font-size: 0.8125rem; font-weight: 600;
+  padding: 0.5rem 0.875rem;
+  border-radius: 0.5rem;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  cursor: pointer;
+}
+.btn-primary { background: var(--ink); color: #fff; }
+.btn-primary:hover { background: #1B2436; }
+.btn-accent { background: var(--accent); color: #fff; }
+.btn-accent:hover { background: #962F16; }
+.btn-ghost {
+  background: transparent; color: rgb(51 65 85);
+  border: 1px solid rgb(203 213 225);
+}
+.btn-ghost:hover { background: rgb(248 250 252); border-color: rgb(148 163 184); }
+.btn-sm { font-size: 0.75rem; padding: 0.3125rem 0.625rem; border-radius: 0.4rem; }
+
+/* Soft pill — color-coded status. */
+.pill {
+  display: inline-flex; align-items: center; gap: 0.375rem;
+  padding: 0.1875rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.6875rem; font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+.pill-emerald { background: #ECFDF5; color: #065F46; border-color: #A7F3D0; }
+.pill-rose    { background: #FFF1F2; color: #9F1239; border-color: #FECDD3; }
+.pill-amber   { background: #FFFBEB; color: #92400E; border-color: #FDE68A; }
+.pill-sky     { background: #EFF6FF; color: #1E40AF; border-color: #BFDBFE; }
+.pill-slate   { background: #F8FAFC; color: #475569; border-color: #E2E8F0; }
+.pill-ink     { background: var(--ink); color: #fff; border-color: var(--ink); }
+.pill-dot { width: 0.4rem; height: 0.4rem; border-radius: 9999px; background: currentColor; opacity: 0.85; }
+
+/* Soft fade for truncated prose excerpts. */
+.fade-mask {
+  position: relative;
+  max-height: 4.5em;
+  overflow: hidden;
+}
+.fade-mask::after {
+  content: "";
+  position: absolute; left: 0; right: 0; bottom: 0; height: 1.6em;
+  background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0.95));
+}
+
+/* Focal number for record cards (Locations wage, etc.) */
+.focal-num {
+  font-family: 'Fraunces', Georgia, serif;
+  font-feature-settings: 'tnum', 'lnum';
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+/* Display number — sans variant of focal-num, used on the data-first home page. */
+.display-num {
+  font-feature-settings: 'tnum', 'lnum', 'ss01';
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+/* Quartile color bar — 4-tier scale for the yard ledger.
+   Q1 = highest pressure (action needed), Q4 = lowest pressure (calm).
+   Used as a thin colored left edge on table rows + as a dot legend. */
+.q-bar {
+  display: inline-block;
+  width: 4px;
+  height: 100%;
+  border-radius: 4px;
+  align-self: stretch;
+}
+.q-bar-1 { background: #E11D48; }    /* rose-600  — hot */
+.q-bar-2 { background: #F59E0B; }    /* amber-500 */
+.q-bar-3 { background: #10B981; }    /* emerald-500 */
+.q-bar-4 { background: #38BDF8; }    /* sky-400 */
+.q-bar-0 { background: #CBD5E1; }    /* slate-300 — no data */
+
+/* Quartile cell — leftmost table column. Solid color block, no text. */
+.q-cell {
+  width: 6px;
+  padding: 0 !important;
+  background-clip: content-box;
+}
+.q-cell-1 { background: #E11D48; }
+.q-cell-2 { background: #F59E0B; }
+.q-cell-3 { background: #10B981; }
+.q-cell-4 { background: #38BDF8; }
+.q-cell-0 { background: #E2E8F0; }
+
+/* Freshness chip — pulsing dot when fresh, calm when stale. */
+.fresh-dot {
+  width: 0.5rem; height: 0.5rem;
+  border-radius: 9999px;
+  background: #10B981;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+  animation: pulseFresh 2s infinite;
+}
+@keyframes pulseFresh {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+/* Gap value coloring helpers — terracotta for negative (we're behind), emerald for positive. */
+.gap-neg { color: var(--accent); }    /* terracotta — we're paying below market */
+.gap-pos { color: #047857; }          /* emerald-700 — we're ahead */
+.gap-flat { color: #94A3B8; }         /* slate-400 — no signal */
+
+/* Sortable table header — chevron treatment. */
+.th-sort { cursor: pointer; user-select: none; }
+.th-sort:hover { color: rgb(15 23 42); }
+.th-sort .chev { opacity: 0.3; margin-left: 0.25rem; font-size: 0.6rem; }
+.th-sort.is-active .chev { opacity: 1; color: var(--accent); }
+
+/* Compact map override for the home page (smaller than the editorial plate). */
+.map-compact { height: 360px; border-radius: 0.875rem; }

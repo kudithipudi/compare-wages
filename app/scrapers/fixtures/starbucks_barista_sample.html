@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{TITLE}} - {{CITY}}, {{STATE}} | Starbucks Careers</title>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "JobPosting",
+  "title": "{{TITLE}}",
+  "datePosted": "2026-06-01",
+  "validThrough": "2026-09-01",
+  "employmentType": "PART_TIME",
+  "hiringOrganization": {
+    "@type": "Organization",
+    "name": "Starbucks Coffee Company",
+    "sameAs": "https://www.starbucks.com/"
+  },
+  "jobLocation": {
+    "@type": "Place",
+    "address": {
+      "@type": "PostalAddress",
+      "streetAddress": "{{STREET}}",
+      "addressLocality": "{{CITY}}",
+      "addressRegion": "{{STATE}}",
+      "postalCode": "{{ZIP}}",
+      "addressCountry": "US"
+    }
+  },
+  "baseSalary": {
+    "@type": "MonetaryAmount",
+    "currency": "USD",
+    "value": {"@type": "QuantitativeValue", "minValue": 17.00, "maxValue": 20.50, "unitText": "HOUR"}
+  }
+}
+</script>
+</head>
+<body>
+<main>
+<h1>{{TITLE}}</h1>
+<p class="location">{{CITY}}, {{STATE}} · Store #{{STREET}}</p>
+<section class="pay">
+<p>Starbucks pay starts at <strong>$17.00</strong> per hour for our partners (employees).
+Total cash compensation, including tips, typically ranges <strong>$17.00–$20.50/hr</strong>.
+We also offer Bean Stock, healthcare, and tuition through ASU Online.</p>
+</section>
+<section class="overview">
+<p>As a Starbucks partner, you'll create the Starbucks Experience for our customers
+through excellent service and expertly-crafted products.</p>
+</section>
+</main>
+</body>
+</html>

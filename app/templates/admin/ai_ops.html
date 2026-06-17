@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% from "admin/_shell.html" import admin_shell, empty_state %}
+{% block title %}Admin · AI Operations{% endblock %}
+{% block body %}
+{% call admin_shell("ai_ops") %}
+
+  <div x-data="{
+    purpose: 'all',
+    mode: 'all',
+    status: 'all',
+    matches(card) {
+      if (this.purpose !== 'all' && card.dataset.purpose !== this.purpose) return false;
+      if (this.mode !== 'all' && card.dataset.mode !== this.mode) return false;
+      if (this.status !== 'all' && card.dataset.status !== this.status) return false;
+      return true;
+    },
+    refresh() {
+      let shown = 0;
+      const cards = this.$root.querySelectorAll('[data-call-card]');
+      cards.forEach(c => {
+        const ok = this.matches(c);
+        c.style.display = ok ? '' : 'none';
+        if (ok) shown++;
+      });
+      const counter = this.$root.querySelector('[data-shown-count]');
+      if (counter) counter.textContent = shown;
+      const empty = this.$root.querySelector('[data-empty-filter]');
+      if (empty) empty.style.display = (shown === 0 && cards.length > 0) ? '' : 'none';
+    }
+  }" x-init="$nextTick(() => refresh())">
+
+  <div class="flex flex-wrap items-end justify-between gap-4 pb-4 border-b border-slate-200">
+    <div>
+      <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900">AI Operations</h1>
+      <p class="text-sm text-slate-500 mt-1">
+        Last <span class="num">{{ calls|length }}</span> calls
+        <span class="text-slate-300 mx-1">·</span>
+        showing <span class="num" data-shown-count>{{ calls|length }}</span>
+      </p>
+    </div>
+  </div>
+
+  <!-- Hero strip: aggregate cards. -->
+  {% set purposes = [
+    ("extraction",     "Extraction",     "sky"),
+    ("classification", "Classification", "emerald"),
+    ("narrative",      "Narrative",      "amber"),
+  ] %}
+  <section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    {% for key, label, color in purposes %}
+      {% set a = aggregates.get(key, {"n": 0, "ok_rate": 0, "avg_latency": 0, "total_cost": 0}) %}
+      <div class="card p-5 flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <span class="pill pill-{{ color }}">{{ label }}</span>
+          <span class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">{{ a.n }} calls</span>
+        </div>
+        <div class="flex items-baseline gap-1.5">
+          <span class="focal-num text-3xl font-semibold {% if a.ok_rate >= 95 %}text-emerald-700{% elif a.ok_rate >= 80 %}text-amber-700{% else %}text-rose-700{% endif %}">{{ a.ok_rate }}</span>
+          <span class="text-sm text-slate-400 font-medium">% ok</span>
+        </div>
+        <dl class="grid grid-cols-2 gap-x-3 gap-y-1 pt-2 border-t border-slate-100 text-xs">
+          <dt class="text-slate-500">Avg latency</dt><dd class="num text-right text-slate-700 font-medium">{{ a.avg_latency }} ms</dd>
+          <dt class="text-slate-500">Total cost</dt><dd class="num text-right text-slate-700 font-medium">{{ a.total_cost | money }}</dd>
+        </dl>
+      </div>
+    {% endfor %}
+
+    <!-- Total tile (ink). -->
+    <div class="card-ink p-5 flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <span class="pill" style="background: rgba(255,255,255,0.08); color: #fff; border-color: rgba(255,255,255,0.18);">All purposes</span>
+        <span class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">{{ total.n }} calls</span>
+      </div>
+      <div class="flex items-baseline gap-1.5">
+        <span class="focal-num text-3xl font-semibold {% if total.ok_rate >= 95 %}text-emerald-300{% elif total.ok_rate >= 80 %}text-amber-300{% else %}text-rose-300{% endif %}">{{ total.ok_rate }}</span>
+        <span class="text-sm text-slate-400 font-medium">% ok</span>
+      </div>
+      <dl class="grid grid-cols-2 gap-x-3 gap-y-1 pt-2 border-t border-white/10 text-xs">
+        <dt class="text-slate-400">Avg latency</dt><dd class="num text-right text-slate-100 font-medium">{{ total.avg_latency }} ms</dd>
+        <dt class="text-slate-400">Total cost</dt><dd class="num text-right text-slate-100 font-medium">{{ total.total_cost | money }}</dd>
+      </dl>
+    </div>
+  </section>
+
+  {% if calls %}
+  <!-- Filter chips. -->
+  <section class="card p-4 sm:p-5 space-y-3">
+    <div>
+      <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2">Purpose</div>
+      <div class="flex flex-wrap gap-1.5">
+        <button type="button" class="chip" :class="{'chip-active': purpose === 'all'}" @click="purpose = 'all'; refresh()">All <span class="chip-count">{{ calls|length }}</span></button>
+        {% for key, label, color in purposes %}
+          {% set n = calls | selectattr("purpose", "equalto", key) | list | length %}
+          <button type="button" class="chip" :class="{'chip-active': purpose === '{{ key }}'}" @click="purpose = '{{ key }}'; refresh()">{{ label }} <span class="chip-count">{{ n }}</span></button>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div>
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2">Mode</div>
+        <div class="flex flex-wrap gap-1.5">
+          {% set n_live = calls | rejectattr("mocked") | list | length %}
+          {% set n_mock = calls | selectattr("mocked") | list | length %}
+          <button type="button" class="chip" :class="{'chip-active': mode === 'all'}" @click="mode = 'all'; refresh()">All</button>
+          <button type="button" class="chip" :class="{'chip-active': mode === 'live'}" @click="mode = 'live'; refresh()">Live <span class="chip-count">{{ n_live }}</span></button>
+          <button type="button" class="chip" :class="{'chip-active': mode === 'mock'}" @click="mode = 'mock'; refresh()">Mock <span class="chip-count">{{ n_mock }}</span></button>
+        </div>
+      </div>
+      <div>
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2">Status</div>
+        <div class="flex flex-wrap gap-1.5">
+          {% set n_ok = calls | selectattr("validation_ok") | list | length %}
+          {% set n_err = calls | rejectattr("validation_ok") | list | length %}
+          <button type="button" class="chip" :class="{'chip-active': status === 'all'}" @click="status = 'all'; refresh()">All</button>
+          <button type="button" class="chip" :class="{'chip-active': status === 'ok'}" @click="status = 'ok'; refresh()">OK <span class="chip-count">{{ n_ok }}</span></button>
+          <button type="button" class="chip" :class="{'chip-active': status === 'err'}" @click="status = 'err'; refresh()">Errored <span class="chip-count">{{ n_err }}</span></button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Feed of call cards -->
+  <section class="grid gap-4 lg:grid-cols-2">
+    {% for c in calls %}
+    {% set ptag =
+        'sky' if c.purpose == 'extraction'
+        else 'emerald' if c.purpose == 'classification'
+        else 'amber' if c.purpose == 'narrative'
+        else 'slate' %}
+    <article
+      data-call-card
+      data-purpose="{{ c.purpose }}"
+      data-mode="{{ 'mock' if c.mocked else 'live' }}"
+      data-status="{{ 'ok' if c.validation_ok else 'err' }}"
+      class="card card-hover p-5 flex flex-col gap-3">
+
+      <!-- Header: timestamp + tags + view -->
+      <header class="flex items-start justify-between gap-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="num text-xs text-slate-500" title="{{ c.created_at.strftime('%Y-%m-%d %H:%M:%S') if c.created_at else '' }}">
+            {{ c.created_at.strftime("%b %d · %H:%M") if c.created_at else "—" }}
+          </span>
+          <span class="text-slate-300">·</span>
+          <span class="pill pill-{{ ptag }}">{{ c.purpose }}</span>
+          {% if c.validation_ok %}
+            <span class="pill pill-emerald">ok</span>
+          {% else %}
+            <span class="pill pill-rose" title="{{ c.validation_error }}">errored</span>
+          {% endif %}
+          {% if c.mocked %}
+            <span class="pill pill-amber">mock</span>
+          {% else %}
+            <span class="pill pill-slate">live</span>
+          {% endif %}
+        </div>
+        <a href="{{ prefix }}/admin/ai-ops/{{ c.id }}"
+           class="text-xs font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap">
+          #{{ c.id }} →
+        </a>
+      </header>
+
+      <!-- Model identifier -->
+      <div class="font-mono text-[11px] text-slate-500 break-all">{{ c.model }}</div>
+
+      <!-- Prompt + response excerpts -->
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1">Prompt</div>
+          <div class="fade-mask font-mono text-[11px] leading-relaxed text-slate-700">{{ c.prompt[:200] }}{% if c.prompt|length > 200 %}…{% endif %}</div>
+        </div>
+        <div>
+          <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1">Response</div>
+          <div class="fade-mask font-mono text-[11px] leading-relaxed text-slate-700">{{ c.response[:200] }}{% if c.response|length > 200 %}…{% endif %}</div>
+        </div>
+      </div>
+
+      <!-- Stat strip -->
+      <div class="grid grid-cols-4 gap-3 pt-3 border-t border-slate-100">
+        <div class="kv">
+          <span class="kv-k">Tokens in</span>
+          <span class="kv-v num">{{ c.tokens_in }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-k">Tokens out</span>
+          <span class="kv-v num">{{ c.tokens_out }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-k">Cost</span>
+          <span class="kv-v num">{{ c.cost_usd | money }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-k">Latency</span>
+          <span class="kv-v num">{{ c.latency_ms }} ms</span>
+        </div>
+      </div>
+    </article>
+    {% endfor %}
+  </section>
+
+  <div data-empty-filter style="display:none" class="text-center py-12 px-4 border border-dashed border-slate-300 rounded-xl bg-white">
+    <p class="text-sm font-semibold text-slate-700">No calls match these filters.</p>
+    <p class="text-xs text-slate-500 mt-1.5">Try clicking "All" on each chip row above.</p>
+  </div>
+
+  {% else %}
+    {{ empty_state("No LLM calls recorded.", "Trigger an ingestion to populate the call log.") }}
+  {% endif %}
+
+  </div>
+
+{% endcall %}
+{% endblock %}

@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% from "admin/_shell.html" import admin_shell, status_tag, empty_state %}
+{% block title %}Admin · Run #{{ row.id }}{% if row.status == "running" %} · in progress{% endif %}{% endblock %}
+{% block body %}
+{% call admin_shell("runs") %}
+
+  {% if row.status == "running" %}
+  {# Light auto-refresh while the ingestion thread is still working. No flicker concerns
+     since the page is short. Polling stops automatically when status flips to success/failed. #}
+  <script>setTimeout(function () { window.location.reload(); }, 2500);</script>
+  {% endif %}
+
+  <!-- Breadcrumb / header -->
+  <div class="flex flex-wrap items-end justify-between gap-4 pb-4 border-b border-slate-200">
+    <div>
+      <p class="text-xs text-slate-500">
+        <a href="{{ prefix }}/admin/runs" class="hover:text-[color:var(--accent)]">Runs</a>
+        <span class="mx-1 text-slate-300">/</span>
+        <span class="num">#{{ row.id }}</span>
+      </p>
+      <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900 mt-2 flex items-center gap-3 flex-wrap">
+        Run <span class="num">#{{ row.id }}</span>
+        {{ status_tag(row.status) }}
+        {% if row.status == "running" %}
+        <span class="text-xs text-[color:var(--accent)] font-medium animate-pulse">live · refreshing every 2.5s</span>
+        {% endif %}
+      </h1>
+    </div>
+    <form method="post" action="{{ prefix }}/admin/run-now">
+      <button class="btn btn-accent">Run now</button>
+    </form>
+  </div>
+
+  <!-- Scope -->
+  <section class="card p-5">
+    <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2">Scope</div>
+    {% if not row.scope_yard_codes %}
+      <span class="pill pill-slate">All active yards (implicit full run)</span>
+    {% else %}
+      <div class="flex flex-wrap gap-1.5">
+      {% for code in row.scope_yard_codes.split(",") %}
+        <span class="pill pill-amber num">{{ code }}</span>
+      {% endfor %}
+      </div>
+    {% endif %}
+  </section>
+
+  <!-- Headline tiles -->
+  {% set total_extract = row.extraction_success + row.extraction_no_wage_found + row.extraction_failed %}
+  {% set ok_rate = (100 * row.extraction_success / total_extract) | round(1) if total_extract else 0 %}
+
+  <section class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="card p-5">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Postings</div>
+      <div class="focal-num text-3xl font-semibold text-slate-900 mt-2">{{ row.postings_collected }}</div>
+    </div>
+    <div class="card p-5">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">OK rate</div>
+      <div class="focal-num text-3xl font-semibold mt-2 {% if ok_rate >= 90 %}text-emerald-700{% elif ok_rate >= 70 %}text-amber-700{% else %}text-rose-700{% endif %}">
+        {% if total_extract %}{{ ok_rate }}<span class="text-base text-slate-400 font-medium">%</span>{% else %}—{% endif %}
+      </div>
+    </div>
+    <div class="card p-5">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">LLM calls</div>
+      <div class="focal-num text-3xl font-semibold text-slate-900 mt-2">{{ calls|length }}</div>
+    </div>
+    <div class="card p-5">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Triggered by</div>
+      <div class="text-lg font-semibold text-slate-900 mt-3">{{ row.triggered_by }}</div>
+    </div>
+  </section>
+
+  <!-- Three-counter triage strip: distinguishes honest no-wage outcomes (Home Depot
+       outside mandated states) from real transport bugs (LLM 4xx/5xx, network). -->
+  <section class="card p-5">
+    <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-3">Extraction breakdown</div>
+    <div class="grid grid-cols-3 gap-4">
+      <div>
+        <div class="focal-num text-2xl font-semibold text-emerald-700">{{ row.extraction_success }}</div>
+        <div class="text-xs text-slate-500 mt-1" title="LLM parsed and returned a usable wage">extracted ok</div>
+      </div>
+      <div>
+        <div class="focal-num text-2xl font-semibold text-amber-700">{{ row.extraction_no_wage_found }}</div>
+        <div class="text-xs text-slate-500 mt-1" title="LLM responded cleanly but the page disclosed no wage — not a bug">no wage found</div>
+      </div>
+      <div>
+        <div class="focal-num text-2xl font-semibold text-rose-700">{{ row.extraction_failed }}</div>
+        <div class="text-xs text-slate-500 mt-1" title="LLM call raised: network, 4xx/5xx, or parse error (real bug)">failed (transport)</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Timing -->
+  <section class="card p-5">
+    <div class="grid sm:grid-cols-3 gap-5">
+      <div>
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Started</div>
+        <div class="num text-sm mt-1.5 text-slate-800">{{ row.started_at.strftime("%Y-%m-%d %H:%M:%S") if row.started_at else "—" }}</div>
+      </div>
+      <div>
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Finished</div>
+        <div class="num text-sm mt-1.5 text-slate-800">{{ row.finished_at.strftime("%Y-%m-%d %H:%M:%S") if row.finished_at else "—" }}</div>
+      </div>
+      <div>
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Duration</div>
+        <div class="num text-sm mt-1.5 text-slate-800">
+          {% if row.started_at and row.finished_at %}
+            {% set secs = (row.finished_at - row.started_at).total_seconds() | int %}
+            {% if secs < 60 %}{{ secs }}s{% else %}{{ (secs / 60) | round(1) }}m{% endif %}
+          {% else %}—{% endif %}
+        </div>
+      </div>
+    </div>
+    {% if row.notes %}
+    <div class="mt-4 pt-4 border-t border-slate-100">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2">Notes</div>
+      <pre class="num text-xs whitespace-pre-wrap text-slate-700 leading-relaxed">{{ row.notes }}</pre>
+    </div>
+    {% endif %}
+  </section>
+
+  <!-- LLM calls during/after run — compact card feed. -->
+  <section>
+    <div class="flex items-end justify-between mb-3">
+      <h2 class="text-base font-semibold text-slate-900">LLM calls in this run</h2>
+      <p class="text-xs text-slate-500"><span class="num">{{ calls|length }}</span> calls</p>
+    </div>
+
+    {% if calls %}
+    <div class="grid gap-3 lg:grid-cols-2">
+      {% for c in calls %}
+      {% set ptag =
+          'sky' if c.purpose == 'extraction'
+          else 'emerald' if c.purpose == 'classification'
+          else 'amber' if c.purpose == 'narrative'
+          else 'slate' %}
+      <a href="{{ prefix }}/admin/ai-ops/{{ c.id }}"
+         class="card card-hover p-4 flex flex-col gap-2">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="num text-xs text-slate-500">#{{ c.id }}</span>
+            <span class="num text-xs text-slate-500">{{ c.created_at.strftime("%H:%M:%S") if c.created_at else "—" }}</span>
+            <span class="pill pill-{{ ptag }}">{{ c.purpose }}</span>
+            {% if c.validation_ok %}<span class="pill pill-emerald">ok</span>
+            {% else %}<span class="pill pill-rose" title="{{ c.validation_error }}">err</span>{% endif %}
+            {% if c.mocked %}<span class="pill pill-amber">mock</span>{% else %}<span class="pill pill-slate">live</span>{% endif %}
+          </div>
+          <span class="text-[color:var(--accent)] text-xs font-semibold">→</span>
+        </div>
+        <div class="font-mono text-[11px] text-slate-500 break-all">{{ c.model }}</div>
+        <div class="grid grid-cols-4 gap-2 text-xs pt-2 border-t border-slate-100">
+          <div><span class="text-slate-400">In</span> <span class="num text-slate-700 font-medium">{{ c.tokens_in }}</span></div>
+          <div><span class="text-slate-400">Out</span> <span class="num text-slate-700 font-medium">{{ c.tokens_out }}</span></div>
+          <div><span class="text-slate-400">Cost</span> <span class="num text-slate-700 font-medium">{{ c.cost_usd | money }}</span></div>
+          <div><span class="text-slate-400">Lat</span> <span class="num text-slate-700 font-medium">{{ c.latency_ms }} ms</span></div>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+      {{ empty_state("No LLM calls associated with this run.", "Either nothing was extracted or calls were pre-existing.") }}
+    {% endif %}
+  </section>
+
+{% endcall %}
+{% endblock %}

@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% from "admin/_shell.html" import admin_shell %}
+{% block title %}Admin · Schedule{% endblock %}
+{% block body %}
+{% call admin_shell("scheduler") %}
+
+  <div class="flex flex-wrap items-end justify-between gap-4 pb-4 border-b border-slate-200">
+    <div>
+      <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900">Schedule</h1>
+      <p class="text-sm text-slate-500 mt-1">Configure cron-based ingestion. All times UTC.</p>
+    </div>
+    <div>
+      {% if cfg and cfg.enabled %}
+        <span class="pill pill-emerald"><span class="pill-dot"></span>enabled</span>
+      {% elif cfg %}
+        <span class="pill pill-slate"><span class="pill-dot"></span>disabled</span>
+      {% else %}
+        <span class="pill pill-amber">not configured</span>
+      {% endif %}
+    </div>
+  </div>
+
+  <section class="grid gap-5 lg:grid-cols-3">
+
+    <!-- Config form -->
+    <div class="card p-6 lg:col-span-2">
+      <h2 class="text-sm font-semibold text-slate-900 mb-4">Configuration</h2>
+      <form method="post" action="{{ prefix }}/admin/scheduler" class="space-y-5 text-sm">
+        <label class="field block">
+          <span class="field-label">Cron expression</span>
+          <input type="text" name="cron_expression"
+                 value="{{ cfg.cron_expression if cfg else '0 6 * * *' }}"
+                 required
+                 class="field-input num text-base" />
+          <span class="block text-xs text-slate-500 mt-2">Five-field POSIX cron: <span class="num">min hour dom mon dow</span></span>
+        </label>
+
+        <label class="flex items-center gap-2.5 cursor-pointer select-none">
+          <input type="checkbox" name="enabled" value="1"
+                 {% if cfg and cfg.enabled %}checked{% endif %}
+                 class="rounded border-slate-300 text-[color:var(--accent)] focus:ring-[color:var(--accent)]" />
+          <span class="font-medium text-slate-700">Enabled</span>
+        </label>
+
+        <div class="pt-4 border-t border-slate-100 flex items-center justify-between gap-2">
+          <p class="text-xs text-slate-500">Saves and reloads the in-process scheduler.</p>
+          <button type="submit" class="btn btn-accent">Save schedule</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Status -->
+    <div class="card p-6 space-y-4">
+      <h2 class="text-sm font-semibold text-slate-900">Status</h2>
+      <dl class="space-y-2.5 text-sm">
+        <div class="flex justify-between gap-2">
+          <dt class="text-slate-500">Current cron</dt>
+          <dd class="num text-xs text-slate-800">{{ cfg.cron_expression if cfg else "—" }}</dd>
+        </div>
+        <div class="flex justify-between gap-2">
+          <dt class="text-slate-500">State</dt>
+          <dd>
+            {% if cfg and cfg.enabled %}<span class="pill pill-emerald">enabled</span>
+            {% elif cfg %}<span class="pill pill-slate">disabled</span>
+            {% else %}<span class="pill pill-amber">none</span>{% endif %}
+          </dd>
+        </div>
+        <div class="flex justify-between gap-2">
+          <dt class="text-slate-500">Last run</dt>
+          <dd class="num text-xs text-slate-800">{{ cfg.last_run_at.strftime("%Y-%m-%d %H:%M") if (cfg and cfg.last_run_at) else "—" }}</dd>
+        </div>
+        <div class="flex justify-between gap-2">
+          <dt class="text-slate-500">Next run</dt>
+          <dd class="num text-xs text-slate-800">
+            {% if next_run %}{{ next_run.strftime("%Y-%m-%d %H:%M") }} UTC
+            {% else %}—{% endif %}
+          </dd>
+        </div>
+      </dl>
+      <div class="pt-4 border-t border-slate-100">
+        <form method="post" action="{{ prefix }}/admin/run-now">
+          <button class="w-full btn btn-primary">Run now (manual)</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- Cron examples -->
+  <section class="card p-6">
+    <h2 class="text-sm font-semibold text-slate-900 mb-3">Common cron expressions</h2>
+    <div class="divide-y divide-slate-100">
+      {% set examples = [
+        ("0 6 * * 1",   "Mondays at 06:00 — weekly digest cadence"),
+        ("0 6 * * *",   "Every day at 06:00 — daily morning refresh"),
+        ("0 */6 * * *", "Every 6 hours — high-frequency monitoring"),
+        ("*/15 * * * *","Every 15 minutes — debug / smoke"),
+        ("0 0 1 * *",   "First of the month — monthly archive"),
+      ] %}
+      {% for expr, meaning in examples %}
+      <div class="flex items-center justify-between gap-3 py-3">
+        <div class="min-w-0">
+          <div class="num font-semibold text-slate-900">{{ expr }}</div>
+          <div class="text-xs text-slate-500 mt-0.5">{{ meaning }}</div>
+        </div>
+        <button type="button"
+                onclick="document.querySelector('input[name=cron_expression]').value='{{ expr }}'; window.scrollTo({top:0,behavior:'smooth'});"
+                class="btn btn-sm btn-ghost whitespace-nowrap">use →</button>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="text-xs text-slate-500 mt-4">
+      Reference: <a href="https://crontab.guru" target="_blank" rel="noopener" class="text-[color:var(--accent)] hover:underline">crontab.guru</a> if you want to author or verify an expression.
+    </p>
+  </section>
+
+{% endcall %}
+{% endblock %}

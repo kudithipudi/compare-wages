@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% from "admin/_shell.html" import admin_shell %}
+{% block title %}Admin · LLM call #{{ row.id }}{% endblock %}
+{% block body %}
+{% call admin_shell("ai_ops") %}
+
+  {% set ptag =
+      'sky' if row.purpose == 'extraction'
+      else 'emerald' if row.purpose == 'classification'
+      else 'amber' if row.purpose == 'narrative'
+      else 'slate' %}
+
+  <!-- Header -->
+  <div class="flex flex-wrap items-end justify-between gap-4 pb-4 border-b border-slate-200">
+    <div>
+      <p class="text-xs text-slate-500">
+        <a href="{{ prefix }}/admin/ai-ops" class="hover:text-[color:var(--accent)]">AI Operations</a>
+        <span class="mx-1 text-slate-300">/</span>
+        <span class="num">#{{ row.id }}</span>
+      </p>
+      <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900 mt-2 flex items-center gap-3 flex-wrap">
+        LLM call <span class="num">#{{ row.id }}</span>
+        <span class="pill pill-{{ ptag }}">{{ row.purpose }}</span>
+        {% if row.mocked %}<span class="pill pill-amber">mock</span>
+        {% else %}<span class="pill pill-slate">live</span>{% endif %}
+        {% if row.validation_ok %}<span class="pill pill-emerald">ok</span>
+        {% else %}<span class="pill pill-rose">errored</span>{% endif %}
+      </h1>
+    </div>
+  </div>
+
+  <!-- Validation error banner -->
+  {% if not row.validation_ok %}
+  <div class="card border-rose-200" style="background: #FFF1F2;">
+    <div class="p-5 flex items-start gap-3">
+      <span class="h-2 w-2 rounded-full bg-rose-600 mt-2 shrink-0"></span>
+      <div class="min-w-0">
+        <div class="text-sm font-semibold text-rose-900">Validation failed</div>
+        <pre class="num text-xs whitespace-pre-wrap mt-2 leading-relaxed text-rose-800">{{ row.validation_error or "No error message recorded." }}</pre>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Metadata grid: 4 focal metric tiles + secondary dl -->
+  <section class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="card p-5">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Latency</div>
+      <div class="focal-num text-3xl font-semibold text-slate-900 mt-2">{{ row.latency_ms }}<span class="text-base text-slate-400 font-medium ml-1">ms</span></div>
+    </div>
+    <div class="card p-5">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Cost</div>
+      <div class="focal-num text-3xl font-semibold text-slate-900 mt-2">{{ row.cost_usd | money }}</div>
+    </div>
+    <div class="card p-5">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Tokens in</div>
+      <div class="focal-num text-3xl font-semibold text-slate-900 mt-2">{{ row.tokens_in }}</div>
+    </div>
+    <div class="card p-5">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Tokens out</div>
+      <div class="focal-num text-3xl font-semibold text-slate-900 mt-2">{{ row.tokens_out }}</div>
+    </div>
+  </section>
+
+  <section class="card p-5">
+    <dl class="grid grid-cols-2 md:grid-cols-4 gap-5 text-sm">
+      <div>
+        <dt class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Created at</dt>
+        <dd class="num text-sm text-slate-800 mt-1.5">{{ row.created_at.strftime("%Y-%m-%d %H:%M:%S") if row.created_at else "—" }}</dd>
+      </div>
+      <div>
+        <dt class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Model</dt>
+        <dd class="font-mono text-xs text-slate-800 mt-1.5 break-all">{{ row.model }}</dd>
+      </div>
+      <div>
+        <dt class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Related posting</dt>
+        <dd class="num text-sm text-slate-800 mt-1.5">
+          {% if row.related_posting_id %}#{{ row.related_posting_id }}
+          {% else %}<span class="text-slate-400">—</span>{% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Mode</dt>
+        <dd class="mt-1.5">
+          {% if row.mocked %}<span class="pill pill-amber">mock</span>
+          {% else %}<span class="pill pill-slate">live</span>{% endif %}
+        </dd>
+      </div>
+    </dl>
+  </section>
+
+  <!-- Prompt -->
+  <section class="card overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-3.5 border-b border-slate-200">
+      <div class="flex items-center gap-2">
+        <h2 class="text-sm font-semibold text-slate-900">Prompt</h2>
+        <span class="pill pill-sky">input</span>
+      </div>
+      <span class="num text-xs text-slate-500">{{ row.prompt|length }} chars · {{ row.tokens_in }} tokens</span>
+    </div>
+    <pre class="font-mono text-[12px] leading-relaxed text-slate-800 px-5 py-4 whitespace-pre-wrap break-words max-h-[480px] overflow-auto bg-slate-50">{{ row.prompt }}</pre>
+  </section>
+
+  <!-- Response -->
+  <section class="card overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-3.5 border-b border-slate-200">
+      <div class="flex items-center gap-2">
+        <h2 class="text-sm font-semibold text-slate-900">Response</h2>
+        <span class="pill pill-emerald">output</span>
+      </div>
+      <span class="num text-xs text-slate-500">{{ row.response|length }} chars · {{ row.tokens_out }} tokens</span>
+    </div>
+    <pre class="font-mono text-[12px] leading-relaxed text-slate-800 px-5 py-4 whitespace-pre-wrap break-words max-h-[480px] overflow-auto bg-slate-50">{{ row.response }}</pre>
+  </section>
+
+{% endcall %}
+{% endblock %}

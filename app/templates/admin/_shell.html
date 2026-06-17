@@ -1,0 +1,112 @@
+{# Admin shell macro. Usage:
+     {% from "admin/_shell.html" import admin_shell %}
+     {% call admin_shell("locations") %}
+       ...page content...
+     {% endcall %}
+#}
+{% macro admin_shell(active) %}
+{% set nav_items = [
+  ("overview",      "Overview",        "/admin"),
+  ("locations",     "Locations",       "/admin/locations"),
+  ("competitors",   "Competitors",     "/admin/competitors"),
+  ("role_mappings", "Role mappings",   "/admin/role-mappings"),
+  ("runs",          "Ingestion runs",  "/admin/runs"),
+  ("scrape_runs",   "Scrape runs",     "/admin/scrape-runs"),
+  ("scheduler",     "Schedule",        "/admin/scheduler"),
+  ("ai_ops",        "AI Operations",   "/admin/ai-ops"),
+  ("llm_models",    "LLM models",      "/admin/llm-models"),
+  ("eval",          "Eval harness",    "/admin/eval"),
+] %}
+<div class="min-h-full bg-slate-50 text-slate-900">
+  <!-- Top bar — clean white with hairline rule, like an Airbnb header. -->
+  <header class="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
+    <div class="max-w-[1500px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+      <div class="flex items-center gap-3 min-w-0">
+        <a href="{{ prefix }}/admin" class="flex items-center gap-2.5 group min-w-0">
+          <span class="inline-flex items-center justify-center h-8 w-8 rounded-lg bg-[color:var(--accent)] text-white text-sm font-bold tracking-tight shadow-sm">A</span>
+          <span class="flex flex-col leading-tight min-w-0">
+            <span class="text-[15px] font-semibold tracking-tight text-slate-900 truncate">Wage Intelligence</span>
+            <span class="text-[11px] text-slate-500 truncate">Operator console</span>
+          </span>
+        </a>
+        <span class="hidden sm:inline-flex items-center text-[10px] uppercase tracking-wider text-slate-500 border border-slate-200 bg-slate-50 rounded-full px-2 py-0.5 ml-2">internal</span>
+      </div>
+      <div class="flex items-center gap-2 sm:gap-3">
+        <a href="{{ prefix }}/" class="hidden sm:inline-flex items-center text-sm text-slate-600 hover:text-slate-900 transition">
+          <span aria-hidden="true" class="mr-1">&larr;</span> Public dashboard
+        </a>
+        <form method="post" action="{{ prefix }}/admin/run-now" class="inline">
+          <button type="submit"
+                  class="inline-flex items-center gap-1.5 bg-[color:var(--accent)] hover:bg-[#962F16] text-white text-sm font-semibold px-3.5 py-2 rounded-lg shadow-sm transition">
+            <span class="h-1.5 w-1.5 rounded-full bg-white/90"></span>
+            Run now
+          </button>
+        </form>
+        <form method="post" action="{{ prefix }}/admin/logout" class="inline">
+          <button type="submit"
+                  class="text-sm text-slate-500 hover:text-slate-900 transition px-2 py-1"
+                  title="Sign out">
+            Sign out
+          </button>
+        </form>
+      </div>
+    </div>
+  </header>
+
+  <div class="max-w-[1500px] mx-auto px-4 sm:px-6 py-8 grid gap-8 lg:grid-cols-[224px_minmax(0,1fr)]">
+    <!-- Side nav — borderless, generous spacing. -->
+    <aside class="lg:sticky lg:top-24 self-start">
+      <nav class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+        <ul class="text-sm">
+          {% for key, label, href in nav_items %}
+          <li>
+            <a href="{{ prefix }}{{ href }}"
+               class="flex items-center justify-between px-4 py-2.5 transition
+                      {% if active == key %}bg-slate-50 text-slate-900 font-semibold{% else %}text-slate-600 hover:bg-slate-50 hover:text-slate-900{% endif %}">
+              <span class="flex items-center gap-2">
+                {% if active == key %}<span class="h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]"></span>{% else %}<span class="h-1.5 w-1.5 rounded-full bg-transparent"></span>{% endif %}
+                {{ label }}
+              </span>
+            </a>
+          </li>
+          {% endfor %}
+        </ul>
+      </nav>
+      <p class="text-[11px] text-slate-400 mt-4 px-1 leading-relaxed">
+        Operator surface. Changes apply immediately. Logs are write-once.
+      </p>
+    </aside>
+
+    <!-- Page content slot — vertical rhythm via space-y-8 (Airbnb-ish). -->
+    <main class="min-w-0 space-y-8">
+      {{ caller() }}
+    </main>
+  </div>
+</div>
+{% endmacro %}
+
+{# Reusable bits #}
+
+{% macro page_header(title, subtitle="") %}
+<div class="flex flex-wrap items-end justify-between gap-4 pb-4 border-b border-slate-200">
+  <div>
+    <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900">{{ title }}</h1>
+    {% if subtitle %}<p class="text-sm text-slate-500 mt-1">{{ subtitle }}</p>{% endif %}
+  </div>
+  <div class="flex items-center gap-2">{{ caller() }}</div>
+</div>
+{% endmacro %}
+
+{% macro status_tag(status) %}
+  {% if status == "success" %}<span class="pill pill-emerald"><span class="pill-dot"></span>success</span>
+  {% elif status == "failed" %}<span class="pill pill-rose"><span class="pill-dot"></span>failed</span>
+  {% elif status == "running" %}<span class="pill pill-sky"><span class="pill-dot animate-pulse"></span>running</span>
+  {% else %}<span class="pill pill-slate"><span class="pill-dot"></span>{{ status or "—" }}</span>{% endif %}
+{% endmacro %}
+
+{% macro empty_state(title, hint="") %}
+<div class="text-center py-16 px-4 border border-dashed border-slate-300 rounded-xl bg-white">
+  <p class="text-sm font-semibold text-slate-700">{{ title }}</p>
+  {% if hint %}<p class="text-xs text-slate-500 mt-1.5">{{ hint }}</p>{% endif %}
+</div>
+{% endmacro %}

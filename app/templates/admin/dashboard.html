@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% from "admin/_shell.html" import admin_shell, status_tag %}
+{% block title %}Admin · Overview{% endblock %}
+{% block body %}
+{% call admin_shell("overview") %}
+
+  <!-- Header -->
+  <div class="flex flex-wrap items-end justify-between gap-4 pb-4 border-b border-slate-200">
+    <div>
+      <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900">Overview</h1>
+      <p class="text-sm text-slate-500 mt-1">Operator console. Trigger ingestion, inspect the pipeline, configure schedules.</p>
+    </div>
+    <div class="text-xs text-slate-400">Last refresh on page load</div>
+  </div>
+
+  <!-- Count tiles — each is a focal number on a calm card. -->
+  <section class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    {% set tiles = [
+      ("Locations",     counts.locations,     "/admin/locations",      "Copart yards on file"),
+      ("Competitors",   counts.competitors,   "/admin/competitors",    "Tracked employers"),
+      ("Role mappings", counts.role_mappings, "/admin/role-mappings",  "Normalized role pairs"),
+      ("LLM calls",     counts.llm_calls,     "/admin/ai-ops",         "All-time recorded"),
+    ] %}
+    {% for label, value, href, sub in tiles %}
+    <a href="{{ prefix }}{{ href }}" class="card card-hover p-5 group">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">{{ label }}</div>
+      <div class="focal-num text-4xl font-semibold text-slate-900 mt-2">{{ value }}</div>
+      <div class="flex items-center justify-between mt-3 pt-3 border-t border-slate-100">
+        <span class="text-xs text-slate-500">{{ sub }}</span>
+        <span class="text-[color:var(--accent)] text-xs opacity-0 group-hover:opacity-100 transition">→</span>
+      </div>
+    </a>
+    {% endfor %}
+  </section>
+
+  <!-- Run Now CTA + last run + schedule -->
+  <section class="grid gap-5 lg:grid-cols-3">
+
+    <!-- Big Run Now -->
+    <div class="card-ink p-6 flex flex-col justify-between">
+      <div>
+        <div class="text-[10px] uppercase tracking-wider text-[color:var(--accent)] font-semibold">Manual trigger</div>
+        <h2 class="text-xl font-semibold mt-2">Run ingestion now</h2>
+        <p class="text-sm text-slate-300 mt-3 leading-relaxed">
+          Scrape configured competitors, extract wages via LLM, recompute pressure indexes. Runs synchronously; you'll be redirected to the run detail page.
+        </p>
+      </div>
+      <form method="post" action="{{ prefix }}/admin/run-now" class="mt-5">
+        <button type="submit"
+                class="w-full btn btn-accent">
+          <span class="h-1.5 w-1.5 rounded-full bg-white"></span>
+          Run now
+        </button>
+      </form>
+    </div>
+
+    <!-- Last run -->
+    <div class="card p-5">
+      <div class="flex items-center justify-between">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Last run</div>
+        {% if last_run %}<a href="{{ prefix }}/admin/runs/{{ last_run.id }}" class="text-xs text-[color:var(--accent)] hover:underline">details →</a>{% endif %}
+      </div>
+      {% if last_run %}
+        <div class="mt-3 flex items-center gap-2">
+          {{ status_tag(last_run.status) }}
+          <span class="text-xs text-slate-400 num">#{{ last_run.id }}</span>
+        </div>
+        <dl class="mt-4 space-y-1.5 text-sm">
+          <div class="flex justify-between"><dt class="text-slate-500">Triggered</dt><dd class="num text-slate-700">{{ last_run.triggered_by }}</dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">Started</dt><dd class="num text-xs text-slate-700">{{ last_run.started_at.strftime("%Y-%m-%d %H:%M") if last_run.started_at else "—" }}</dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">Finished</dt><dd class="num text-xs text-slate-700">{{ last_run.finished_at.strftime("%Y-%m-%d %H:%M") if last_run.finished_at else "—" }}</dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">Postings</dt><dd class="num text-slate-700">{{ last_run.postings_collected }}</dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">Extraction</dt>
+            <dd class="num text-slate-700"><span class="text-emerald-700">{{ last_run.extraction_success }}</span> <span class="text-slate-300">/</span> <span class="text-rose-700">{{ last_run.extraction_failed }}</span></dd></div>
+        </dl>
+        {% if last_run.notes %}<p class="mt-3 text-xs text-slate-500 italic line-clamp-2">{{ last_run.notes }}</p>{% endif %}
+      {% else %}
+        <p class="text-sm text-slate-500 mt-3">No runs recorded yet. Hit Run Now to bootstrap.</p>
+      {% endif %}
+    </div>
+
+    <!-- Schedule -->
+    <div class="card p-5">
+      <div class="flex items-center justify-between">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Schedule</div>
+        <a href="{{ prefix }}/admin/scheduler" class="text-xs text-[color:var(--accent)] hover:underline">configure →</a>
+      </div>
+      {% if schedule %}
+        <div class="mt-3 flex items-center gap-2">
+          {% if schedule.enabled %}
+            <span class="pill pill-emerald"><span class="pill-dot"></span>enabled</span>
+          {% else %}
+            <span class="pill pill-slate"><span class="pill-dot"></span>disabled</span>
+          {% endif %}
+        </div>
+        <dl class="mt-4 space-y-1.5 text-sm">
+          <div class="flex justify-between"><dt class="text-slate-500">Cron</dt><dd class="num text-xs text-slate-700">{{ schedule.cron_expression }}</dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">Last run</dt>
+            <dd class="num text-xs text-slate-700">{{ schedule.last_run_at.strftime("%Y-%m-%d %H:%M") if schedule.last_run_at else "—" }}</dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">Next run</dt>
+            <dd class="num text-xs text-slate-700">
+              {% if next_run %}{{ next_run.strftime("%Y-%m-%d %H:%M") }} UTC
+              {% else %}<span class="text-slate-400">—</span>{% endif %}
+            </dd></div>
+        </dl>
+      {% else %}
+        <p class="text-sm text-slate-500 mt-3">No schedule configured. Ingestion will only run when triggered manually.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <!-- Quick links -->
+  <section class="grid gap-4 sm:grid-cols-2">
+    <a href="{{ prefix }}/admin/ai-ops"
+       class="card card-hover p-5 group">
+      <div class="flex items-start justify-between">
+        <div>
+          <div class="text-sm font-semibold text-slate-900">AI Operations</div>
+          <p class="text-xs text-slate-500 mt-1.5 leading-relaxed">Inspect LLM calls: prompts, responses, costs, validation failures.</p>
+        </div>
+        <span class="text-[color:var(--accent)] opacity-0 group-hover:opacity-100 transition">→</span>
+      </div>
+    </a>
+    <a href="{{ prefix }}/admin/eval"
+       class="card card-hover p-5 group">
+      <div class="flex items-start justify-between">
+        <div>
+          <div class="text-sm font-semibold text-slate-900">Eval harness</div>
+          <p class="text-xs text-slate-500 mt-1.5 leading-relaxed">Wage / role extraction accuracy against the labeled fixtures.</p>
+        </div>
+        <span class="text-[color:var(--accent)] opacity-0 group-hover:opacity-100 transition">→</span>
+      </div>
+    </a>
+  </section>
+
+{% endcall %}
+{% endblock %}

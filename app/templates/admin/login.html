@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Sign in · Admin · ACME Wage Intelligence{% endblock %}
+
+{% block body %}
+<div class="min-h-screen flex items-center justify-center px-4 bg-paper">
+  <form method="post" action="{{ prefix }}/admin/login"
+        class="w-full max-w-sm bg-white border border-slate-200 rounded-xl shadow-sm p-8">
+    <div class="mb-6">
+      <div class="text-[10px] uppercase tracking-[0.18em] text-brand-accent font-semibold">Admin</div>
+      <h1 class="font-display text-2xl font-semibold text-brand-ink mt-1 leading-tight">
+        Wage Intelligence
+      </h1>
+      <p class="text-sm text-slate-500 mt-2">Sign in to manage data, models, and ingestion runs.</p>
+    </div>
+
+    {% if error %}
+    <div class="mb-4 px-3 py-2 rounded-md bg-rose-50 border border-rose-200 text-rose-800 text-sm leading-snug">
+      {{ error }}
+    </div>
+    {% endif %}
+
+    <input type="hidden" name="next" value="{{ next or '' }}" />
+
+    <label class="block mb-3">
+      <span class="text-xs font-medium text-slate-600">Username</span>
+      <input type="text" name="username" value="{{ username or '' }}" required autofocus autocomplete="username"
+             class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm text-brand-ink focus:outline-none focus:ring-2 focus:ring-brand-accent/30 focus:border-brand-accent/50" />
+    </label>
+
+    <label class="block mb-6">
+      <span class="text-xs font-medium text-slate-600">Password</span>
+      <input type="password" name="password" required autocomplete="current-password"
+             class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm text-brand-ink focus:outline-none focus:ring-2 focus:ring-brand-accent/30 focus:border-brand-accent/50" />
+    </label>
+
+    <button type="submit"
+            class="w-full bg-brand-ink hover:bg-slate-800 text-white text-sm font-semibold py-2.5 rounded-md transition">
+      Sign in
+    </button>
+
+    <p class="text-center text-xs text-slate-500 mt-5">
+      <a href="{{ prefix }}/" class="hover:text-brand-ink">← Back to public dashboard</a>
+    </p>
+  </form>
+</div>
+{% endblock %}

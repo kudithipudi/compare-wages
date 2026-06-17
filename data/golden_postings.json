@@ -1,0 +1,72 @@
+[
+  {
+    "id": "g01",
+    "employer": "Walmart",
+    "raw_title": "Stocking Associate",
+    "html": "<div><h1>Stocking Associate</h1><p>Pay range <strong>$17.50–$22.00</strong> per hour. Store #1234 — Dallas, TX.</p></div>",
+    "expected": {"wage_low": 17.5, "wage_high": 22.0, "wage_unit": "hourly", "role": "Stocking Associate"}
+  },
+  {
+    "id": "g02",
+    "employer": "Amazon",
+    "raw_title": "Warehouse Operator",
+    "html": "<div><h1>Warehouse Operator</h1><div>Pay rate: $19.00 - $21.50 / hr. Facility HOU2.</div></div>",
+    "expected": {"wage_low": 19.0, "wage_high": 21.5, "wage_unit": "hourly", "role": "Warehouse Operator"}
+  },
+  {
+    "id": "g03",
+    "employer": "Home Depot",
+    "raw_title": "Lot Associate",
+    "html": "<div><h1>Lot Associate</h1><p>Starting at <b>$16.50/hr</b>. Range: $16.50 – $19.00 per hour.</p></div>",
+    "expected": {"wage_low": 16.5, "wage_high": 19.0, "wage_unit": "hourly", "role": "Lot Associate"}
+  },
+  {
+    "id": "g04",
+    "employer": "Costco",
+    "raw_title": "Front End Assistant",
+    "html": "<p>Starting hourly wage <strong>$20.00</strong>, rising to <strong>$22.00</strong> per hour by Mar 2027.</p>",
+    "expected": {"wage_low": 20.0, "wage_high": 22.0, "wage_unit": "hourly", "role": "Front End Assistant"}
+  },
+  {
+    "id": "g05",
+    "employer": "Starbucks",
+    "raw_title": "Barista",
+    "html": "<p>Starbucks pay starts at <strong>$17.00</strong> per hour. Total cash including tips typically $17.00–$20.50/hr.</p>",
+    "expected": {"wage_low": 17.0, "wage_high": 20.5, "wage_unit": "hourly", "role": "Barista"}
+  },
+  {
+    "id": "g06",
+    "employer": "Amazon",
+    "raw_title": "Sortation Associate - Night Shift",
+    "html": "<div><h1>Sortation Associate - Night Shift</h1><div>Pay rate: $20.25 - $23.00 / hr</div></div>",
+    "expected": {"wage_low": 20.25, "wage_high": 23.0, "wage_unit": "hourly", "role": "Sortation Associate - Night Shift"}
+  },
+  {
+    "id": "g07",
+    "employer": "Walmart",
+    "raw_title": "Cashier",
+    "html": "<div><h1>Cashier</h1><p><strong>$15.00–$18.50</strong> per hour, Store #4521 — Charlotte, NC.</p></div>",
+    "expected": {"wage_low": 15.0, "wage_high": 18.5, "wage_unit": "hourly", "role": "Cashier"}
+  },
+  {
+    "id": "g08",
+    "employer": "Home Depot",
+    "raw_title": "Freight Associate",
+    "html": "<div><h1>Freight Associate</h1><p>Starting at <b>$18.00/hr</b>. Range: $18.00 – $21.50 per hour.</p></div>",
+    "expected": {"wage_low": 18.0, "wage_high": 21.5, "wage_unit": "hourly", "role": "Freight Associate"}
+  },
+  {
+    "id": "g09",
+    "employer": "Costco",
+    "raw_title": "Service Deli Clerk",
+    "html": "<p>Per Teamsters National Agreement: starting hourly wage <strong>$19.50</strong>, with scheduled increases to <strong>$21.50</strong> per hour by Mar 2027.</p>",
+    "expected": {"wage_low": 19.5, "wage_high": 21.5, "wage_unit": "hourly", "role": "Service Deli Clerk"}
+  },
+  {
+    "id": "g10",
+    "employer": "Starbucks",
+    "raw_title": "Shift Supervisor",
+    "html": "<p>Shift Supervisors at Starbucks earn <strong>$19.00</strong>–<strong>$23.00</strong>/hr including tips.</p>",
+    "expected": {"wage_low": 19.0, "wage_high": 23.0, "wage_unit": "hourly", "role": "Shift Supervisor"}
+  }
+]

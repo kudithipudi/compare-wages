@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% from "admin/_shell.html" import admin_shell, page_header %}
+
+{% block title %}LLM models · Admin{% endblock %}
+
+{% block body %}
+{% call admin_shell("llm_models") %}
+
+{% call page_header("LLM models", "One model per purpose. The pipeline reads this fresh on every call — no restart needed when you change a DB override.") %}{% endcall %}
+
+<section class="card p-5 sm:p-6">
+  <h2 class="text-sm font-semibold text-slate-900 mb-3">Resolution order</h2>
+  <ol class="text-xs text-slate-700 leading-relaxed list-decimal pl-5 space-y-1">
+    <li><span class="font-semibold">DB override (this page).</span> If a row exists, it wins. Read on every LLM call — live, no restart.</li>
+    <li><span class="font-semibold">Per-purpose env var</span> (<code class="num">EXTRACTION_MODEL</code>, <code class="num">CLASSIFICATION_MODEL</code>, <code class="num">NARRATIVE_MODEL</code>). Only used when there's no DB row. Requires a service restart to pick up changes.</li>
+    <li><span class="font-semibold">Global default</span> (<code class="num">OPENROUTER_MODEL</code>, currently <code class="num">{{ global_default or '(unset)' }}</code>). Fallback when neither of the above is set.</li>
+  </ol>
+  <p class="text-xs text-slate-600 mt-3">
+    If you edited <code class="num">.env</code> and don't see your changes here, you probably have a DB row from a prior save — use the <span class="font-semibold">Reset to env</span> button on the relevant card to remove it.
+  </p>
+</section>
+
+<div class="grid gap-5 lg:grid-cols-3">
+  {% for c in cards %}
+  {% set is_db = c.source == 'db' %}
+  {% set is_env = c.source == 'env' %}
+  {% set is_default = c.source == 'default' %}
+
+  <div class="card p-5 sm:p-6 flex flex-col gap-4">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <div class="text-[10px] uppercase tracking-wider text-[color:var(--accent)] font-semibold">Purpose</div>
+        <div class="text-lg font-semibold text-slate-900 mt-0.5">{{ c.purpose }}</div>
+      </div>
+      {% if is_db %}<span class="pill pill-emerald">DB override</span>
+      {% elif is_env %}<span class="pill pill-sky">from env</span>
+      {% else %}<span class="pill pill-slate">global default</span>{% endif %}
+    </div>
+
+    <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Effective on next call</div>
+      <div class="font-mono text-sm text-slate-900 mt-1 break-all">{{ c.effective_model }}</div>
+      {% if is_db %}
+        <div class="text-[11px] text-slate-500 mt-1.5">from DB · T={{ c.db_row.temperature }}</div>
+      {% elif is_env %}
+        <div class="text-[11px] text-slate-500 mt-1.5">from <code>{{ c.purpose|upper }}_MODEL</code> in .env</div>
+      {% else %}
+        <div class="text-[11px] text-slate-500 mt-1.5">from <code>OPENROUTER_MODEL</code> in .env</div>
+      {% endif %}
+    </div>
+
+    {# .env-visible value (read-only signal even when not winning) #}
+    <div class="text-[11px] text-slate-500 leading-snug">
+      <span class="uppercase tracking-wider font-semibold text-slate-400">.env value</span>
+      <span class="ml-1 num">{{ c.env_value or '(unset)' }}</span>
+      {% if c.env_value and is_db %}<span class="ml-1 text-slate-400">— shadowed by DB override</span>{% endif %}
+    </div>
+
+    <form method="post" action="{{ prefix }}/admin/llm-models" class="flex flex-col gap-3 mt-1 pt-4 border-t border-slate-100">
+      <input type="hidden" name="purpose" value="{{ c.purpose }}" />
+
+      <label class="field block">
+        <span class="field-label">DB override · Model identifier</span>
+        <input type="text" name="model"
+               value="{{ c.db_row.model if c.db_row else c.env_value }}"
+               placeholder="{{ c.env_value or global_default }}"
+               list="suggested-models"
+               class="field-input font-mono text-sm" />
+      </label>
+
+      <label class="field block">
+        <span class="field-label">Temperature</span>
+        <input type="number" step="0.05" min="0" max="2" name="temperature"
+               value="{{ c.db_row.temperature if c.db_row else 0.1 }}"
+               class="field-input num w-28" />
+      </label>
+
+      <label class="field block">
+        <span class="field-label">Notes</span>
+        <textarea name="notes" rows="2" class="field-input">{{ c.db_row.notes if c.db_row else "" }}</textarea>
+      </label>
+
+      <div class="flex items-center justify-between pt-1">
+        <span class="text-[10px] uppercase tracking-wider text-slate-400">Saves a DB row · overrides .env</span>
+        <button type="submit" class="btn btn-sm btn-primary">Save</button>
+      </div>
+    </form>
+
+    {% if c.db_row %}
+    <form method="post" action="{{ prefix }}/admin/llm-models/{{ c.purpose }}/reset"
+          onsubmit="return confirm('Delete the DB override for {{ c.purpose }}? It will fall back to .env ({{ c.env_value or 'unset' }}).');"
+          class="-mt-1">
+      <button type="submit"
+              class="text-xs font-medium text-rose-700 hover:text-rose-900 hover:underline">
+        ← Reset to env value
+      </button>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<datalist id="suggested-models">
+  {% for m in suggestions %}<option value="{{ m }}"></option>{% endfor %}
+</datalist>
+
+<section class="card p-5 sm:p-6">
+  <h2 class="text-sm font-semibold text-slate-900 mb-2">Pick the cheapest model that hits the eval bar</h2>
+  <p class="text-xs text-slate-700 leading-relaxed">
+    After a model change, hit <a href="{{ prefix }}/admin/eval" class="text-[color:var(--accent)] underline">/admin/eval</a> to confirm extraction accuracy hasn't regressed,
+    and watch <a href="{{ prefix }}/admin/ai-ops" class="text-[color:var(--accent)] underline">/admin/ai-ops</a> for cost and latency under load. Pipeline reads the model on
+    every call — no app restart needed when changing a DB override.
+  </p>
+  <div class="mt-4 grid gap-2.5 sm:grid-cols-2 text-xs">
+    <div class="flex items-start gap-2"><span class="pill pill-emerald shrink-0">$</span><span>Classification is hot — pin to the cheapest model that scores well on eval.</span></div>
+    <div class="flex items-start gap-2"><span class="pill pill-amber shrink-0">★</span><span>Narrative is cold — pay for prose, set temperature 0.3–0.5.</span></div>
+    <div class="flex items-start gap-2"><span class="pill pill-sky shrink-0">{}</span><span>Extraction must follow JSON schema strictly — pick a model with native structured-output support.</span></div>
+    <div class="flex items-start gap-2"><span class="pill pill-slate shrink-0">⌥</span><span>Temperature 0 for deterministic eval runs; raise it only for narrative.</span></div>
+  </div>
+</section>
+
+{% endcall %}
+{% endblock %}

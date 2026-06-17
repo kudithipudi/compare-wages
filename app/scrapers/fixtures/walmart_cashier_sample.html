@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{{TITLE}} - {{CITY}}, {{STATE}} | Walmart Careers</title>
+  <meta name="description" content="Apply for the {{TITLE}} role at Walmart in {{CITY}}, {{STATE}}." />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "JobPosting",
+    "title": "{{TITLE}}",
+    "description": "Walmart Cashier / Front End Associate. Greet customers, ring up purchases, handle returns, and keep the front-end area clean and stocked.",
+    "datePosted": "2024-10-01",
+    "validThrough": "2025-12-31",
+    "employmentType": "PART_TIME",
+    "hiringOrganization": {
+      "@type": "Organization",
+      "name": "Walmart",
+      "sameAs": "https://www.walmart.com",
+      "logo": "https://careers.walmart.com/assets/logo.png"
+    },
+    "jobLocation": {
+      "@type": "Place",
+      "address": {
+        "@type": "PostalAddress",
+        "streetAddress": "{{STREET}}",
+        "addressLocality": "{{CITY}}",
+        "addressRegion": "{{STATE}}",
+        "postalCode": "{{ZIP}}",
+        "addressCountry": "US"
+      }
+    },
+    "baseSalary": {
+      "@type": "MonetaryAmount",
+      "currency": "USD",
+      "value": {
+        "@type": "QuantitativeValue",
+        "minValue": 15.00,
+        "maxValue": 18.50,
+        "unitText": "HOUR"
+      }
+    },
+    "identifier": {
+      "@type": "PropertyValue",
+      "name": "Walmart",
+      "value": "WD-{{CITY}}-{{TITLE}}-0001"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header class="walmart-header">
+    <a href="/" class="walmart-logo">Walmart Careers</a>
+    <nav>
+      <a href="/results">Search Jobs</a>
+      <a href="/saved">Saved</a>
+    </nav>
+  </header>
+
+  <main class="job-detail" data-testid="job-detail-root">
+    <section class="job-summary">
+      <h1 data-testid="job-title">{{TITLE}}</h1>
+      <div class="job-meta">
+        <address data-testid="job-location" class="job-location">
+          {{STREET}}<br />
+          {{CITY}}, {{STATE}} {{ZIP}}
+        </address>
+        <span class="job-type">Part-Time</span>
+        <span class="job-req">Req ID: WD-{{CITY}}-{{TITLE}}-0001</span>
+      </div>
+    </section>
+
+    <section class="job-section pay" data-testid="pay-section">
+      <h2>Pay range</h2>
+      <p>
+        The hourly wage range for this position is <strong>$15.00 &ndash; $18.50 per hour</strong>.
+        The actual hourly rate will equal or exceed the required minimum wage applicable to the
+        job location.
+      </p>
+      <p>
+        Additional compensation in the form of premiums may be paid in amounts ranging from
+        $0.35 per hour to $3.00 per hour in specific circumstances. Premiums may be based on
+        but not limited to: schedule, shift, working conditions, or geographic location.
+      </p>
+    </section>
+
+    <section class="job-section position-summary" data-testid="position-summary">
+      <h2>Position Summary</h2>
+      <p>
+        As a Cashier / Front End Associate at Walmart, you greet customers, ring up
+        purchases efficiently and accurately, handle returns, and keep the front-end
+        area clean and stocked. You are the last face our customers see before they
+        leave the store, so your friendly, can-do attitude sets the tone for the
+        entire shopping experience.
+      </p>
+    </section>
+
+    <section class="job-section responsibilities">
+      <h2>What You'll Do</h2>
+      <ul>
+        <li>Greet customers and assist them through the checkout process.</li>
+        <li>Scan items, process payments (cash, card, EBT, mobile), and bag merchandise.</li>
+        <li>Handle returns, exchanges, and price checks per Walmart policy.</li>
+        <li>Maintain a clean, safe, and well-stocked front-end area.</li>
+        <li>Partner with the front-end coach to support a positive customer experience.</li>
+      </ul>
+    </section>
+
+    <section class="job-section qualifications">
+      <h2>Minimum Qualifications</h2>
+      <ul>
+        <li>Must be 16 years of age or older.</li>
+        <li>Must be legally permitted to work in the United States.</li>
+        <li>Ability to lift up to 25 lbs and stand for extended periods.</li>
+      </ul>
+    </section>
+
+    <section class="job-section benefits">
+      <h2>Benefits</h2>
+      <p>
+        Eligible associates receive a comprehensive benefits package including paid
+        time off, 401(k) match, associate stock purchase plan, education benefits
+        through Live Better U, and merchandise discounts at Walmart and Sam's Club.
+      </p>
+    </section>
+
+    <section class="job-section apply-cta">
+      <a class="apply-button" href="#apply">Apply Now</a>
+    </section>
+  </main>
+
+  <footer class="walmart-footer">
+    <p>&copy; 2024 Walmart Inc. All Rights Reserved.</p>
+  </footer>
+</body>
+</html>

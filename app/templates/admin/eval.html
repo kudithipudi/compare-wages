@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% from "admin/_shell.html" import admin_shell, empty_state %}
+{% block title %}Admin · Eval harness{% endblock %}
+{% block body %}
+{% call admin_shell("eval") %}
+
+  <div class="flex flex-wrap items-end justify-between gap-4 pb-4 border-b border-slate-200">
+    <div>
+      <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900">Eval harness</h1>
+      <p class="text-sm text-slate-500 mt-1">
+        Extraction accuracy against labeled fixtures
+        <span class="text-slate-300 mx-1">·</span>
+        <span class="num">{{ summary.n if summary else 0 }}</span> cases
+      </p>
+    </div>
+  </div>
+
+  <!-- Summary cards -->
+  {% if summary %}
+  {% set acc_tiles = [
+    ("Wage low accuracy",  summary.wage_low_accuracy_pct,  "%"),
+    ("Wage high accuracy", summary.wage_high_accuracy_pct, "%"),
+    ("Role match",         summary.role_match_pct,         "%"),
+    ("Avg confidence",     (summary.avg_confidence * 100) | round(1) if summary.avg_confidence is not none else 0, "%"),
+  ] %}
+  <section class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    {% for label, value, unit in acc_tiles %}
+    <div class="card p-5 flex flex-col gap-3">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">{{ label }}</div>
+      <div class="focal-num text-4xl font-semibold
+        {% if value >= 90 %}text-emerald-700{% elif value >= 70 %}text-amber-700{% else %}text-rose-700{% endif %}">
+        {{ value }}<span class="text-base text-slate-400 font-medium">{{ unit }}</span>
+      </div>
+      <div class="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+        <div class="h-full {% if value >= 90 %}bg-emerald-500{% elif value >= 70 %}bg-amber-500{% else %}bg-rose-500{% endif %}"
+             style="width: {{ value }}%"></div>
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  <!-- Results: card per case, 4 rows of fields inside. -->
+  {% if results %}
+  <section>
+    <div class="flex items-end justify-between mb-3">
+      <h2 class="text-base font-semibold text-slate-900">Per-case results</h2>
+      <p class="text-xs text-slate-500">Expected vs predicted side-by-side. Ticks for correctness.</p>
+    </div>
+
+    <div class="grid gap-4 lg:grid-cols-2">
+      {% for r in results %}
+        {% set exp = r.expected or {} %}
+        {% set pred = r.predicted or {} %}
+        {% set conf = pred.get("confidence") if pred else none %}
+        <article class="card p-5 flex flex-col gap-3 {% if r.error %}border-rose-200{% endif %}" {% if r.error %}style="background: #FFF7F7;"{% endif %}>
+          <header class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="num text-xs text-slate-400">#{{ r.id }}</span>
+                <span class="text-sm font-semibold text-slate-900">{{ r.employer or "—" }}</span>
+              </div>
+              <div class="text-xs text-slate-600 mt-1 leading-snug" title="{{ r.raw_title }}">{{ r.raw_title }}</div>
+              {% if conf is not none %}
+                <div class="text-[10px] text-slate-400 mt-1 num">confidence: {{ (conf * 100) | round | int }}%</div>
+              {% endif %}
+            </div>
+          </header>
+
+          {% if r.error %}
+          <div class="text-xs text-rose-700 font-medium leading-relaxed" title="{{ r.error }}">{{ r.error[:160] }}{% if r.error|length > 160 %}…{% endif %}</div>
+          {% endif %}
+
+          <!-- Field-by-field table -->
+          <div class="grid grid-cols-[auto,1fr,1fr,auto] gap-x-3 gap-y-2 text-xs items-center border-t border-slate-100 pt-3">
+            <div class="text-slate-400 uppercase tracking-wider font-semibold text-[10px]">Field</div>
+            <div class="text-slate-400 uppercase tracking-wider font-semibold text-[10px]">Expected</div>
+            <div class="text-slate-400 uppercase tracking-wider font-semibold text-[10px]">Predicted</div>
+            <div class="text-slate-400 uppercase tracking-wider font-semibold text-[10px] text-right">✓</div>
+
+            <!-- Wage low -->
+            <div class="text-slate-600">Wage low</div>
+            <div class="num text-slate-800">
+              {% set v = exp.get("wage_low") %}{% if v is not none %}{{ v | money }}{% else %}<span class="text-slate-400">—</span>{% endif %}
+            </div>
+            <div class="num text-slate-800">
+              {% set v = pred.get("wage_low") %}{% if v is not none %}{{ v | money }}{% else %}<span class="text-slate-400">—</span>{% endif %}
+            </div>
+            <div class="text-right">
+              {% if r.wage_low_correct %}<span class="text-emerald-600 font-bold">✓</span>{% else %}<span class="text-rose-600 font-bold">✗</span>{% endif %}
+            </div>
+
+            <!-- Wage high -->
+            <div class="text-slate-600">Wage high</div>
+            <div class="num text-slate-800">
+              {% set v = exp.get("wage_high") %}{% if v is not none %}{{ v | money }}{% else %}<span class="text-slate-400">—</span>{% endif %}
+            </div>
+            <div class="num text-slate-800">
+              {% set v = pred.get("wage_high") %}{% if v is not none %}{{ v | money }}{% else %}<span class="text-slate-400">—</span>{% endif %}
+            </div>
+            <div class="text-right">
+              {% if r.wage_high_correct %}<span class="text-emerald-600 font-bold">✓</span>{% else %}<span class="text-rose-600 font-bold">✗</span>{% endif %}
+            </div>
+
+            <!-- Wage unit -->
+            <div class="text-slate-600">Wage unit</div>
+            <div class="num text-slate-800">{{ exp.get("wage_unit") or "—" }}</div>
+            <div class="num text-slate-800">{{ pred.get("wage_unit") or "—" }}</div>
+            <div class="text-right text-slate-300">·</div>
+
+            <!-- Role -->
+            <div class="text-slate-600">Role</div>
+            <div class="text-slate-800">{{ exp.get("role") or "—" }}</div>
+            <div class="text-slate-800">{{ pred.get("role") or "—" }}</div>
+            <div class="text-right">
+              {% if r.role_match %}<span class="text-emerald-600 font-bold">✓</span>{% else %}<span class="text-rose-600 font-bold">✗</span>{% endif %}
+            </div>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% else %}
+    {{ empty_state("No eval results.", "Add fixtures under tests/eval_harness to see accuracy here.") }}
+  {% endif %}
+
+{% endcall %}
+{% endblock %}

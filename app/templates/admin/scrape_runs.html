@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% from "admin/_shell.html" import admin_shell, status_tag, empty_state %}
+{% block title %}Admin · Scrape runs{% endblock %}
+{% block body %}
+{% call admin_shell("scrape_runs") %}
+
+  <div class="flex flex-wrap items-end justify-between gap-4 pb-4 border-b border-slate-200">
+    <div>
+      <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900">Scrape runs</h1>
+      <p class="text-sm text-slate-500 mt-1">
+        Latest <span class="num">{{ rows|length }}</span> employer-site scrape runs (capped at 50)
+      </p>
+    </div>
+    <a href="{{ prefix }}/admin/competitors" class="btn btn-primary">Start a scrape →</a>
+  </div>
+
+  {% if rows %}
+  <section class="grid gap-4 lg:grid-cols-2">
+    {% for r in rows %}
+    <a href="{{ prefix }}/admin/scrape-runs/{{ r.id }}" class="card card-hover p-5 flex flex-col gap-3">
+
+      <header class="flex items-start justify-between gap-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="num text-sm font-semibold text-slate-900">#{{ r.id }}</span>
+          {{ status_tag(r.status) }}
+          {% if r.triggered_by == "manual" %}<span class="pill pill-sky">manual</span>
+          {% elif r.triggered_by == "scheduled" %}<span class="pill pill-slate">scheduled</span>
+          {% else %}<span class="pill pill-slate">{{ r.triggered_by }}</span>{% endif %}
+        </div>
+        <span class="text-xs text-[color:var(--accent)] font-semibold whitespace-nowrap">view →</span>
+      </header>
+
+      <h3 class="text-lg font-semibold text-slate-900 leading-snug">{{ r.competitor_name }}</h3>
+
+      <!-- Focal: candidates → saved. -->
+      <div class="flex items-end gap-4">
+        <div>
+          <div class="focal-num text-3xl font-semibold text-slate-900">{{ r.postings_saved }}</div>
+          <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mt-0.5">Postings saved</div>
+        </div>
+        <div class="flex-1 grid grid-cols-2 gap-2 pl-4 border-l border-slate-100">
+          <div>
+            <div class="num text-lg font-semibold text-slate-700">{{ r.candidates_found }}</div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Candidates</div>
+          </div>
+          <div>
+            <div class="num text-lg font-semibold text-amber-700">{{ r.extraction_no_wage_found }}</div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">No wage</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100">
+        <div class="kv">
+          <span class="kv-k">Started</span>
+          <span class="kv-v text-xs">{{ r.started_at.strftime("%b %d · %H:%M") if r.started_at else "—" }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-k">Duration</span>
+          <span class="kv-v text-xs">
+            {% if r.started_at and r.finished_at %}
+              {% set secs = (r.finished_at - r.started_at).total_seconds() | int %}
+              {% if secs < 60 %}{{ secs }}s{% else %}{{ (secs / 60) | round(1) }}m{% endif %}
+            {% else %}—{% endif %}
+          </span>
+        </div>
+      </div>
+
+      {% if r.notes %}
+      <p class="text-xs text-slate-500 leading-relaxed line-clamp-2 italic" title="{{ r.notes }}">{{ r.notes }}</p>
+      {% endif %}
+    </a>
+    {% endfor %}
+  </section>
+  {% else %}
+    {{ empty_state("No scrape runs yet.", "Trigger one from the Competitors page (Scrape now button).") }}
+  {% endif %}
+
+{% endcall %}
+{% endblock %}
