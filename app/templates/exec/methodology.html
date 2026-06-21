@@ -33,6 +33,13 @@
         </div>
       </div>
     </div>
+
+    {# Mobile nav row — desktop nav above is hidden below md. #}
+    <nav class="md:hidden max-w-[1100px] mx-auto px-4 sm:px-6 border-t border-slate-100 py-2 flex items-center gap-1 overflow-x-auto text-sm">
+      <a href="{{ prefix }}/" class="px-3 py-1.5 rounded-md text-slate-600 hover:text-slate-900 hover:bg-slate-50 whitespace-nowrap">Overview</a>
+      <a href="{{ prefix }}/methodology" class="px-3 py-1.5 rounded-md font-semibold text-slate-900 bg-slate-100 whitespace-nowrap">Methodology</a>
+      <a href="{{ prefix }}/admin" class="px-3 py-1.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-50 whitespace-nowrap">Admin</a>
+    </nav>
   </header>
 
   <main class="max-w-[1100px] mx-auto px-4 sm:px-6 lg:px-8 py-10 lg:py-16 space-y-12 lg:space-y-16">

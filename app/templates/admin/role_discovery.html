@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+{% from "admin/_shell.html" import admin_shell, empty_state %}
+{% block title %}Admin · Role discovery{% endblock %}
+{% block body %}
+{% call admin_shell("role_discovery") %}
+
+  {# Per-bucket pill style. `not_relevant` is slate so it visually de-emphasizes vs.
+     the accept-eligible buckets (outdoor=emerald, indoor=sky). #}
+  {% set bucket_pill = {"outdoor": "emerald", "indoor": "sky", "not_relevant": "slate"} %}
+  {% set status_pill = {"pending": "amber", "accepted": "emerald", "rejected": "slate"} %}
+  {# V2 source pill: emerald for the new web-search source (eye-catching, signals
+     bootstrap value), slate for V1's existing_postings (deemphasized; that's the
+     baseline path). #}
+  {% set source_pill = {"web_search": "emerald", "existing_postings": "slate"} %}
+  {% set source_label = {"web_search": "from web search", "existing_postings": "from postings"} %}
+
+  {% set pending_count = rows|selectattr("status", "equalto", "pending")|list|length %}
+  {% set accepted_count = rows|selectattr("status", "equalto", "accepted")|list|length %}
+  {% set rejected_count = rows|selectattr("status", "equalto", "rejected")|list|length %}
+
+  {# Build the set of competitor IDs that appear in the suggestion list so the
+     competitor chip row only shows ones the operator actually has data for. #}
+  {% set competitor_ids_in_rows = rows|map(attribute="competitor_id")|list|unique|list %}
+
+  <div x-data="{
+    bucket: 'all',
+    status: 'pending',
+    competitor: 'all',
+    source: 'all',
+    matches(card) {
+      if (this.bucket !== 'all' && card.dataset.bucket !== this.bucket) return false;
+      if (this.status !== 'all' && card.dataset.status !== this.status) return false;
+      if (this.competitor !== 'all' && card.dataset.competitor !== this.competitor) return false;
+      if (this.source !== 'all' && card.dataset.source !== this.source) return false;
+      return true;
+    },
+    refresh() {
+      let shown = 0;
+      const cards = this.$root.querySelectorAll('[data-suggestion-card]');
+      cards.forEach(c => {
+        const ok = this.matches(c);
+        c.style.display = ok ? '' : 'none';
+        if (ok) shown++;
+      });
+      const counter = this.$root.querySelector('[data-shown-count]');
+      if (counter) counter.textContent = shown;
+      const empty = this.$root.querySelector('[data-empty-filter]');
+      if (empty) empty.style.display = (shown === 0 && cards.length > 0) ? '' : 'none';
+    }
+  }" x-init="$nextTick(() => refresh())">
+
+    <!-- Page header -->
+    <div class="flex flex-wrap items-end justify-between gap-4 pb-4 border-b border-slate-200">
+      <div>
+        <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900">Role discovery</h1>
+        <p class="text-sm text-slate-500 mt-1">
+          <span class="num">{{ pending_count }}</span> pending
+          <span class="text-slate-300 mx-1">·</span>
+          <span class="num">{{ accepted_count }}</span> accepted
+          <span class="text-slate-300 mx-1">·</span>
+          <span class="num">{{ rejected_count }}</span> rejected
+          <span class="text-slate-300 mx-1">·</span>
+          showing <span class="num" data-shown-count>{{ rows|length }}</span>
+        </p>
+      </div>
+      <a href="{{ prefix }}/admin/role-mappings"
+         class="text-sm text-slate-600 hover:text-slate-900 transition">
+        Role mappings &rarr;
+      </a>
+    </div>
+
+    {# Post-run flash messages from the query string. #}
+    {% if ran_count %}
+    <div class="card p-4 border-emerald-200 bg-emerald-50 text-emerald-900 text-sm">
+      Discovery run finished — <span class="num font-semibold">{{ ran_count }}</span>
+      suggestion{{ '' if ran_count == 1 else 's' }} added or refreshed
+      <span class="text-emerald-700/70">(from existing postings)</span>.
+    </div>
+    {% endif %}
+    {% if ran_web_count %}
+    <div class="card p-4 border-emerald-200 bg-emerald-50 text-emerald-900 text-sm">
+      Web-search discovery finished — <span class="num font-semibold">{{ ran_web_count }}</span>
+      suggestion{{ '' if ran_web_count == 1 else 's' }} added or refreshed
+      <span class="text-emerald-700/70">(from web search)</span>.
+    </div>
+    {% endif %}
+    {% if accepted_count > 0 and request.query_params.get('accepted') %}
+    <div class="card p-4 border-emerald-200 bg-emerald-50 text-emerald-900 text-sm">
+      Bulk accept finished — <span class="num font-semibold">{{ request.query_params.get('accepted') }}</span>
+      suggestion{{ '' if request.query_params.get('accepted') == '1' else 's' }} promoted to role mappings.
+    </div>
+    {% endif %}
+
+    <!-- Run-discovery card (V1 mines DB postings; V2 hits a web search engine). -->
+    <div class="card p-5 space-y-5">
+      <!-- V1: Existing postings -->
+      <div class="flex flex-wrap items-end gap-4">
+        <form method="post" action="{{ prefix }}/admin/role-discovery/run"
+              class="flex flex-wrap items-end gap-3 flex-1 min-w-[280px]">
+          <label class="field flex-1 min-w-[200px]">
+            <span class="field-label">Run discovery (existing postings)</span>
+            <select name="competitor_id" class="field-input bg-white">
+              <option value="">(all competitors)</option>
+              {% for c in competitors %}
+              <option value="{{ c.id }}">{{ c.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button type="submit" class="btn btn-primary"
+                  onclick="this.disabled=true;this.innerText='Running…';this.form.submit();">
+            Run discovery
+          </button>
+        </form>
+        <div class="text-xs text-slate-500 max-w-md leading-relaxed pl-3 border-l border-slate-100">
+          Walks <code class="text-slate-700">JobPosting.raw_title</code> values that
+          aren't already in <code class="text-slate-700">role_mappings</code>, classifies
+          them via the LLM, and queues each one below for your review. A run takes
+          ~20 seconds — the page reloads when it's done.
+        </div>
+      </div>
+
+      <!-- V2: Web search -->
+      <div class="flex flex-wrap items-end gap-4 pt-4 border-t border-slate-100">
+        <form method="post" action="{{ prefix }}/admin/role-discovery/run-web"
+              class="flex flex-wrap items-end gap-3 flex-1 min-w-[280px]">
+          <label class="field flex-1 min-w-[200px]">
+            <span class="field-label">Run discovery (web search)</span>
+            <select name="competitor_id" class="field-input bg-white">
+              <option value="">(all competitors)</option>
+              {% for c in competitors %}
+              <option value="{{ c.id }}">{{ c.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button type="submit" class="btn btn-accent"
+                  onclick="this.disabled=true;this.innerText='Searching…';this.form.submit();">
+            Run web search
+          </button>
+        </form>
+        <div class="text-xs text-slate-500 max-w-md leading-relaxed pl-3 border-l border-slate-100">
+          Searches the web for new role titles this competitor hires for.
+          Use when &ldquo;existing postings&rdquo; has run dry — or for a fresh
+          competitor with no scraped data yet. Results queue into the same
+          review list below with a <span class="pill pill-emerald" style="display:inline-flex;vertical-align:middle;">from web search</span> tag.
+        </div>
+      </div>
+
+      {% if pending_count > 0 %}
+      <div class="mt-5 pt-4 border-t border-slate-100 flex flex-wrap items-end justify-between gap-3">
+        <form method="post" action="{{ prefix }}/admin/role-discovery/bulk-accept"
+              class="flex flex-wrap items-end gap-3"
+              onsubmit="return confirm('Accept every pending outdoor/indoor suggestion at or above this confidence?');">
+          <label class="field">
+            <span class="field-label">Bulk accept ≥</span>
+            <input type="number" name="min_confidence" value="0.85" min="0" max="1" step="0.01"
+                   class="field-input num w-24" />
+          </label>
+          <button type="submit" class="btn btn-accent">Bulk accept</button>
+        </form>
+        <p class="text-xs text-slate-500 max-w-md">
+          Promotes every <em>pending</em> suggestion ≥ this confidence to a
+          <code class="text-slate-700">role_mappings</code> row. <code class="text-slate-700">not_relevant</code>
+          is always skipped.
+        </p>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if rows %}
+    <!-- Filter chip rows: status, bucket, competitor. -->
+    <div class="card p-4 sm:p-5 space-y-3">
+      <div class="flex flex-wrap items-center gap-1.5">
+        <span class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mr-2">Status</span>
+        <button type="button" class="chip" :class="{'chip-active': status === 'all'}"
+                @click="status = 'all'; refresh()">All <span class="chip-count">{{ rows|length }}</span></button>
+        <button type="button" class="chip" :class="{'chip-active': status === 'pending'}"
+                @click="status = 'pending'; refresh()">Pending <span class="chip-count">{{ pending_count }}</span></button>
+        <button type="button" class="chip" :class="{'chip-active': status === 'accepted'}"
+                @click="status = 'accepted'; refresh()">Accepted <span class="chip-count">{{ accepted_count }}</span></button>
+        <button type="button" class="chip" :class="{'chip-active': status === 'rejected'}"
+                @click="status = 'rejected'; refresh()">Rejected <span class="chip-count">{{ rejected_count }}</span></button>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-1.5">
+        <span class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mr-2">Source</span>
+        {% set existing_count = rows | selectattr("source", "equalto", "existing_postings") | list | length %}
+        {% set websearch_count = rows | selectattr("source", "equalto", "web_search") | list | length %}
+        <button type="button" class="chip" :class="{'chip-active': source === 'all'}"
+                @click="source = 'all'; refresh()">All <span class="chip-count">{{ rows|length }}</span></button>
+        <button type="button" class="chip" :class="{'chip-active': source === 'existing_postings'}"
+                @click="source = 'existing_postings'; refresh()">Existing postings <span class="chip-count">{{ existing_count }}</span></button>
+        <button type="button" class="chip" :class="{'chip-active': source === 'web_search'}"
+                @click="source = 'web_search'; refresh()">Web search <span class="chip-count">{{ websearch_count }}</span></button>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-1.5">
+        <span class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mr-2">Bucket</span>
+        <button type="button" class="chip" :class="{'chip-active': bucket === 'all'}"
+                @click="bucket = 'all'; refresh()">All</button>
+        {% for b in ["outdoor", "indoor", "not_relevant"] %}
+        {% set b_count = rows | selectattr("suggested_bucket", "equalto", b) | list | length %}
+        <button type="button" class="chip" :class="{'chip-active': bucket === '{{ b }}'}"
+                @click="bucket = '{{ b }}'; refresh()">{{ b }} <span class="chip-count">{{ b_count }}</span></button>
+        {% endfor %}
+      </div>
+
+      {% if competitors %}
+      <div class="flex flex-wrap items-center gap-1.5">
+        <span class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mr-2">Competitor</span>
+        <button type="button" class="chip" :class="{'chip-active': competitor === 'all'}"
+                @click="competitor = 'all'; refresh()">All</button>
+        {% for c in competitors %}
+        {% if c.id in competitor_ids_in_rows %}
+        {% set c_count = rows | selectattr("competitor_id", "equalto", c.id) | list | length %}
+        <button type="button" class="chip" :class="{'chip-active': competitor === '{{ c.id }}'}"
+                @click="competitor = '{{ c.id }}'; refresh()">{{ c.name }} <span class="chip-count">{{ c_count }}</span></button>
+        {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Suggestion grid -->
+    <section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {% for r in rows %}
+      <article
+        data-suggestion-card
+        data-status="{{ r.status }}"
+        data-bucket="{{ r.suggested_bucket }}"
+        data-competitor="{{ r.competitor_id }}"
+        data-source="{{ r.source }}"
+        class="card card-hover p-5 flex flex-col gap-3">
+
+        <!-- Header: bucket pill + status pill + source pill -->
+        <div class="flex items-start justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="pill pill-{{ bucket_pill.get(r.suggested_bucket, 'slate') }}">
+              {{ r.suggested_bucket }}
+            </span>
+            <span class="pill pill-{{ status_pill.get(r.status, 'slate') }}"><span class="pill-dot"></span>{{ r.status }}</span>
+            <span class="pill pill-{{ source_pill.get(r.source, 'slate') }}" title="discovery source">
+              {{ source_label.get(r.source, r.source) }}
+            </span>
+          </div>
+          <span class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">#{{ r.id }}</span>
+        </div>
+
+        <!-- Title -->
+        <h3 class="text-base font-semibold text-slate-900 leading-snug" title="{{ r.raw_title }}">
+          {{ r.raw_title }}
+        </h3>
+
+        <!-- Competitor scope -->
+        <p class="text-xs text-slate-500">
+          {% if competitor_names.get(r.competitor_id) %}
+            <span class="pill pill-sky">{{ competitor_names[r.competitor_id] }}</span>
+          {% else %}
+            <span class="text-slate-400 italic">unknown competitor</span>
+          {% endif %}
+        </p>
+
+        <!-- Confidence bar -->
+        {% set pct = (r.confidence * 100) | round | int %}
+        <div class="flex items-center gap-2">
+          <div class="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+            <div class="h-full {% if pct >= 80 %}bg-emerald-500{% elif pct >= 60 %}bg-amber-500{% else %}bg-rose-500{% endif %}"
+                 style="width: {{ pct }}%"></div>
+          </div>
+          <span class="text-xs num w-10 text-right text-slate-700 font-medium">{{ pct }}%</span>
+        </div>
+
+        <!-- LLM reasoning -->
+        {% if r.reasoning %}
+        <p class="text-xs text-slate-500 italic leading-relaxed">
+          &ldquo;{{ r.reasoning }}&rdquo;
+        </p>
+        {% endif %}
+
+        <!-- Action row -->
+        <div class="flex items-center justify-between pt-3 mt-auto border-t border-slate-100">
+          {% if r.status == "pending" %}
+            {% if r.suggested_bucket == "not_relevant" %}
+              <span class="text-[11px] text-slate-400 italic">
+                not_relevant — cannot be mapped
+              </span>
+              <form method="post" action="{{ prefix }}/admin/role-discovery/{{ r.id }}/reject" class="inline">
+                <button type="submit" class="btn btn-sm btn-ghost">Reject</button>
+              </form>
+            {% else %}
+              <form method="post" action="{{ prefix }}/admin/role-discovery/{{ r.id }}/reject" class="inline">
+                <button type="submit" class="text-xs font-semibold text-slate-500 hover:text-rose-700 hover:underline">
+                  Reject
+                </button>
+              </form>
+              <form method="post" action="{{ prefix }}/admin/role-discovery/{{ r.id }}/accept" class="inline">
+                <button type="submit" class="btn btn-sm btn-primary">Accept &rarr; mapping</button>
+              </form>
+            {% endif %}
+          {% else %}
+            <span class="text-[11px] text-slate-400">
+              decided · {{ r.created_at | relative_time }}
+            </span>
+          {% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </section>
+
+    <div data-empty-filter style="display:none;">
+      {{ empty_state("No suggestions match these filters.", "Adjust the chips above, or run discovery for another competitor.") }}
+    </div>
+
+    {% else %}
+      {{ empty_state(
+        "No suggestions yet.",
+        "Pick a competitor and click Run discovery — the orchestrator will mine raw titles from JobPosting, classify them with the LLM, and queue them here for your review."
+      ) }}
+    {% endif %}
+
+  </div>
+
+{% endcall %}
+{% endblock %}

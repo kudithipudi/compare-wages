@@ -15,6 +15,7 @@ from app.models import (
     JobPosting,
     LlmCall,
     LlmModelConfig,
+    RoleDiscoverySuggestion,
     RoleMapping,
     ScheduleConfig,
     ScrapeRun,
@@ -23,6 +24,10 @@ from app.models import (
 from app.scheduler import apply_config, next_run_at
 from app.security import credentials_configured, require_admin, verify_credentials
 from app.services.ingestion import run_ingestion
+from app.services.role_discovery import (
+    discover_from_existing_postings,
+    discover_from_web_search,
+)
 from app.services.scraping import run_scrape
 from app.templating import templates
 
@@ -239,6 +244,162 @@ def delete_role_mapping(id: int, s: Session = Depends(get_db)):
         s.delete(row)
         s.commit()
     return _redirect("/admin/role-mappings")
+
+
+# ----- Role discovery -----
+#
+# Mining-then-review workflow that 10x-es operator throughput on expanding the
+# scraper keyword set vs. typing one role-mapping form at a time. See
+# `app/services/role_discovery.py` for the orchestrator and
+# `app/templates/admin/role_discovery.html` for the UI.
+
+# Picked once per bucket on accept. The scraper only cares about `bucket` (it
+# joins on `competitor_role`); these strings exist so the materialized
+# RoleMapping row is human-readable on /admin/role-mappings without an extra
+# inherit-from-suggestion form roundtrip.
+_BUCKET_TO_COPART_ROLE = {
+    "outdoor": "Yard Attendant",
+    "indoor": "Title Clerk",
+}
+
+
+@router.get("/role-discovery", response_class=HTMLResponse)
+def list_role_discovery(
+    request: Request,
+    ran: int = 0,
+    ran_web: int = 0,
+    accepted: int = 0,
+    s: Session = Depends(get_db),
+):
+    rows = list(
+        s.execute(
+            select(RoleDiscoverySuggestion)
+            .order_by(
+                RoleDiscoverySuggestion.status,        # pending first (alpha-sort)
+                RoleDiscoverySuggestion.confidence.desc(),
+                RoleDiscoverySuggestion.created_at.desc(),
+            )
+        ).scalars()
+    )
+    competitors = list(s.execute(select(Competitor).order_by(Competitor.name)).scalars())
+    competitor_names = {c.id: c.name for c in competitors}
+    return templates.TemplateResponse(
+        request,
+        "admin/role_discovery.html",
+        {
+            "rows": rows,
+            "competitors": competitors,
+            "competitor_names": competitor_names,
+            "ran_count": ran,
+            "ran_web_count": ran_web,
+            "accepted_count": accepted,
+        },
+    )
+
+
+@router.post("/role-discovery/run")
+def run_role_discovery(
+    competitor_id: str = Form(""),
+    s: Session = Depends(get_db),
+):
+    cid: Optional[int] = None
+    if competitor_id.strip().isdigit():
+        cid = int(competitor_id)
+    stats = discover_from_existing_postings(s, competitor_id=cid)
+    n = stats["new_suggestions"] + stats["refreshed_suggestions"]
+    return _redirect(f"/admin/role-discovery?ran={n}")
+
+
+@router.post("/role-discovery/run-web")
+def run_role_discovery_web(
+    competitor_id: str = Form(""),
+    s: Session = Depends(get_db),
+):
+    """V2 entry point: web-search-driven role discovery. Queries the open web
+    for each competitor (or just the one specified), extracts candidate titles
+    from search snippets via the LLM, and queues them in the same suggestion
+    table V1 writes to (``source='web_search'``)."""
+    cid: Optional[int] = None
+    if competitor_id.strip().isdigit():
+        cid = int(competitor_id)
+    stats = discover_from_web_search(s, competitor_id=cid)
+    n = stats["new_suggestions"] + stats["refreshed_suggestions"]
+    return _redirect(f"/admin/role-discovery?ran_web={n}")
+
+
+def _accept_suggestion(
+    s: Session, suggestion: RoleDiscoverySuggestion
+) -> Optional[RoleMapping]:
+    """Materialize a RoleMapping from a suggestion. Returns the new mapping (or
+    ``None`` if the suggestion's bucket is ``not_relevant`` — callers must check
+    this and surface a flash error). Marks the suggestion ``accepted``."""
+    if suggestion.suggested_bucket not in ("outdoor", "indoor"):
+        return None
+    copart_role = _BUCKET_TO_COPART_ROLE.get(suggestion.suggested_bucket, "Yard Attendant")
+    mapping = RoleMapping(
+        competitor_id=suggestion.competitor_id,
+        copart_role=copart_role,
+        competitor_role=suggestion.raw_title,
+        bucket=suggestion.suggested_bucket,
+        confidence=suggestion.confidence,
+    )
+    s.add(mapping)
+    suggestion.status = "accepted"
+    return mapping
+
+
+@router.post("/role-discovery/{id}/accept")
+def accept_role_discovery(id: int, s: Session = Depends(get_db)):
+    row = s.get(RoleDiscoverySuggestion, id)
+    if not row:
+        raise HTTPException(404)
+    if row.status != "pending":
+        # Idempotent no-op: already decided. Bounce to the list, don't crash.
+        return _redirect("/admin/role-discovery")
+    mapping = _accept_suggestion(s, row)
+    if mapping is None:
+        raise HTTPException(
+            400,
+            "Cannot accept a 'not_relevant' suggestion — only outdoor/indoor titles map to a scraper keyword.",
+        )
+    s.commit()
+    return _redirect("/admin/role-discovery")
+
+
+@router.post("/role-discovery/{id}/reject")
+def reject_role_discovery(id: int, s: Session = Depends(get_db)):
+    row = s.get(RoleDiscoverySuggestion, id)
+    if not row:
+        raise HTTPException(404)
+    if row.status == "pending":
+        row.status = "rejected"
+        s.commit()
+    return _redirect("/admin/role-discovery")
+
+
+@router.post("/role-discovery/bulk-accept")
+def bulk_accept_role_discovery(
+    min_confidence: float = Form(0.8),
+    s: Session = Depends(get_db),
+):
+    """Accept every pending suggestion at or above the confidence floor whose
+    bucket is mappable (outdoor/indoor). ``not_relevant`` rows are skipped
+    silently — they're not eligible regardless of confidence."""
+    pending = list(
+        s.execute(
+            select(RoleDiscoverySuggestion).where(
+                RoleDiscoverySuggestion.status == "pending",
+                RoleDiscoverySuggestion.confidence >= min_confidence,
+                RoleDiscoverySuggestion.suggested_bucket.in_(("outdoor", "indoor")),
+            )
+        ).scalars()
+    )
+    n = 0
+    for row in pending:
+        if _accept_suggestion(s, row) is not None:
+            n += 1
+    s.commit()
+    return _redirect(f"/admin/role-discovery?accepted={n}")
 
 
 # ----- Ingestion / Run Now -----

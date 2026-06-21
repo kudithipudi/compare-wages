@@ -17,10 +17,16 @@
           map competitor job titles to Copart role buckets
         </p>
       </div>
-      <button @click="open = !open"
-              class="btn btn-primary">
-        <span x-text="open ? 'Close form' : '+ Add mapping'"></span>
-      </button>
+      <div class="flex items-center gap-2">
+        <a href="{{ prefix }}/admin/role-discovery" class="btn btn-ghost"
+           title="Mine raw_title values from JobPosting and have the LLM suggest mappings for you.">
+          Suggest more &rarr;
+        </a>
+        <button @click="open = !open"
+                class="btn btn-primary">
+          <span x-text="open ? 'Close form' : '+ Add mapping'"></span>
+        </button>
+      </div>
     </div>
 
     <div x-show="open" x-cloak x-transition class="card p-5">

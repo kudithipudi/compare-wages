@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     # sessions survive restarts; otherwise a fresh random key is generated each boot.
     session_secret: str = secrets.token_urlsafe(32)
     session_max_age_seconds: int = 12 * 3600
+    # Web-search backend for Role Discovery V2. ``ddg`` is zero-config and free —
+    # the default. ``tavily`` / ``brave`` need ``SEARCH_API_KEY``; if the key is
+    # unset the backend logs a warning and falls back to ``ddg``.
+    search_backend: str = "ddg"
+    search_api_key: str = ""
 
 
 @lru_cache

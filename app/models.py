@@ -10,6 +10,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -75,6 +76,35 @@ class RoleMapping(Base):
     competitor_role: Mapped[str] = mapped_column(String)
     bucket: Mapped[str] = mapped_column(String)  # "outdoor" | "indoor"
     confidence: Mapped[float] = mapped_column(Float, default=0.8)
+
+
+class RoleDiscoverySuggestion(Base):
+    """A candidate ``raw_title`` mined from existing ``JobPosting`` rows that the
+    operator hasn't yet decided to map (or reject) on ``/admin/role-mappings``.
+
+    The Role Discovery workflow (``app/services/role_discovery.py``) writes pending
+    rows; the operator reviews on ``/admin/role-discovery`` and either accepts
+    (which materializes a ``RoleMapping`` row that the next scrape will use) or
+    rejects (so future re-runs don't keep re-surfacing the same title).
+    """
+    __tablename__ = "role_discovery_suggestions"
+    __table_args__ = (
+        # Re-runs MUST upsert, not collide. Per-(competitor, title) uniqueness is the
+        # join key the orchestrator uses to skip already-decided suggestions.
+        UniqueConstraint("competitor_id", "raw_title", name="uq_role_discovery_comp_title"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    competitor_id: Mapped[int] = mapped_column(ForeignKey("competitors.id"), index=True)
+    raw_title: Mapped[str] = mapped_column(String)
+    suggested_bucket: Mapped[str] = mapped_column(String)  # outdoor|indoor|not_relevant
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    reasoning: Mapped[str] = mapped_column(String, default="")
+    status: Mapped[str] = mapped_column(String, default="pending")  # pending|accepted|rejected
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # V1 always writes "existing_postings". V2 will add "careers_search" for active
+    # discovery against the employer's careers site instead of mining the DB.
+    source: Mapped[str] = mapped_column(String, default="existing_postings")
 
 
 class JobPosting(Base):

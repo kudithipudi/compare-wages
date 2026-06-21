@@ -206,6 +206,18 @@ _INDOOR_HINTS = (
     "host", "supervisor", "returns", "self-checkout",
 )
 
+# Role-discovery substring rules. Kept narrower than the general _OUTDOOR_HINTS /
+# _INDOOR_HINTS above on purpose: discovery is making a 3-way call (outdoor vs
+# indoor vs not_relevant) where the general classifier only chose between 2. The
+# explicit-only hits should be confident; everything else falls through to
+# not_relevant so the operator's review queue isn't polluted with garbage.
+_DISCOVERY_OUTDOOR = (
+    "warehouse", "loader", "driver", "yard", "forklift", "stocker", "attendant", "outdoor",
+)
+_DISCOVERY_INDOOR = (
+    "clerk", "cashier", "office", "customer", "claims", "title", "dispatch", "indoor",
+)
+
 
 def _mock_classify(raw_title: str) -> dict[str, Any]:
     t = raw_title.lower()
@@ -219,6 +231,79 @@ def _mock_classify(raw_title: str) -> dict[str, Any]:
         "confidence": 0.7,
         "reasoning": "keyword-matched in mock mode",
     }
+
+
+def _mock_classify_titles_batch(titles: list[str], competitor_name: str) -> dict[str, Any]:
+    """Deterministic batch classification used in mock mode + as a test harness.
+
+    Each title gets bucket=outdoor/indoor/not_relevant via simple substring rules.
+    Confidence mirrors the spec: 0.85 outdoor, 0.80 indoor, 0.50 not_relevant.
+    Returned as a dict (not a list) so the same JSON-schema wrapper used for the
+    other LLM purposes works without a list-typed top-level schema.
+    """
+    out: list[dict[str, Any]] = []
+    for raw in titles:
+        t = (raw or "").lower()
+        if any(h in t for h in _DISCOVERY_OUTDOOR):
+            out.append({
+                "title": raw,
+                "bucket": "outdoor",
+                "confidence": 0.85,
+                "reasoning": "substring matched an outdoor/warehouse hint in mock mode",
+            })
+        elif any(h in t for h in _DISCOVERY_INDOOR):
+            out.append({
+                "title": raw,
+                "bucket": "indoor",
+                "confidence": 0.80,
+                "reasoning": "substring matched an indoor/office hint in mock mode",
+            })
+        else:
+            out.append({
+                "title": raw,
+                "bucket": "not_relevant",
+                "confidence": 0.50,
+                "reasoning": "no outdoor or indoor hint matched in mock mode",
+            })
+    return {"classifications": out}
+
+
+# Role-ish word allowlist for the mock web-extract fallback. We don't want
+# every capitalized phrase a snippet contains ("The Home Depot", "Apply Today")
+# — only ones that plausibly describe an hourly job. The regex below grabs
+# 1–4-word Title-Cased spans; the allowlist then filters them down to actual
+# role candidates. Deterministic, keyword-driven, offline.
+_WEB_EXTRACT_TOKEN_RE = re.compile(
+    r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b"
+)
+_WEB_EXTRACT_ROLE_HINTS = frozenset({
+    "associate", "cashier", "driver", "loader", "clerk", "manager",
+    "specialist", "operator", "attendant", "stocker", "handler", "barista",
+    "supervisor", "assistant", "receiver", "picker", "packer", "filler",
+})
+
+
+def _mock_web_extract(snippets_blob: str) -> dict[str, Any]:
+    """Regex-based mock for the web-extract LLM step. Pulls Title-Cased
+    1–4-word spans whose lowercased last word looks like a role noun (from
+    ``_WEB_EXTRACT_ROLE_HINTS``). Deduped; preserves first-seen order so
+    re-runs over the same fixture are stable."""
+    found: list[str] = []
+    seen: set[str] = set()
+    for m in _WEB_EXTRACT_TOKEN_RE.finditer(snippets_blob):
+        candidate = m.group(0).strip()
+        if not candidate:
+            continue
+        # Last word must be a known role-ish noun. This is what filters out
+        # "The Home Depot" or "Apply Today" — neither ends in a role hint.
+        last = candidate.rsplit(" ", 1)[-1].lower()
+        if last not in _WEB_EXTRACT_ROLE_HINTS:
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        found.append(candidate)
+    return {"titles": found}
 
 
 def _mock_narrative(facts: dict[str, Any]) -> dict[str, Any]:
@@ -278,6 +363,57 @@ NARRATIVE_SCHEMA = {
 }
 NARRATIVE_REQUIRED_KEYS = ("body",)
 
+# Role-discovery batch schema. OpenAI strict mode requires a top-level object — so
+# we wrap the actual list under a single "classifications" key instead of typing
+# the response as a bare JSON array. Each list element follows the same
+# {title, bucket, confidence, reasoning} shape spec'd in role_discovery.html's
+# review queue. ``not_relevant`` is the third bucket that lets the LLM signal
+# "this title isn't a yard or office role" — those rows can't be accepted.
+ROLE_DISCOVERY_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "classifications": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "title": {"type": "string"},
+                    "bucket": {
+                        "type": "string",
+                        "enum": ["outdoor", "indoor", "not_relevant"],
+                    },
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "reasoning": {"type": "string"},
+                },
+                "required": ["title", "bucket", "confidence", "reasoning"],
+            },
+        }
+    },
+    "required": ["classifications"],
+}
+ROLE_DISCOVERY_REQUIRED_KEYS = ("classifications",)
+
+# Role-discovery V2 — web-search snippet → distinct title extraction. The
+# orchestrator hands the LLM ~5 search result snippets per call; the LLM
+# returns the list of job-title strings mentioned in them, skipping generic
+# phrases like "jobs", "careers", "apply now". Downstream of this, the
+# extracted titles flow through ``classify_titles_batch`` exactly like V1's
+# DB-mined titles do — so the rest of the bucket pipeline stays unchanged.
+WEB_EXTRACT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "titles": {
+            "type": "array",
+            "items": {"type": "string"},
+        }
+    },
+    "required": ["titles"],
+}
+WEB_EXTRACT_REQUIRED_KEYS = ("titles",)
+
 # Maps the wire schema → the keys we actually require client-side. We can't read this
 # from `required` on the schema because we deliberately diverge there.
 _REQUIRED_KEYS_BY_SCHEMA: dict[int, tuple[str, ...]] = {}
@@ -291,6 +427,8 @@ def _register_required(schema: dict, keys: tuple[str, ...]) -> dict:
 _register_required(WAGE_SCHEMA, WAGE_REQUIRED_KEYS)
 _register_required(CLASSIFY_SCHEMA, CLASSIFY_REQUIRED_KEYS)
 _register_required(NARRATIVE_SCHEMA, NARRATIVE_REQUIRED_KEYS)
+_register_required(ROLE_DISCOVERY_SCHEMA, ROLE_DISCOVERY_REQUIRED_KEYS)
+_register_required(WEB_EXTRACT_SCHEMA, WEB_EXTRACT_REQUIRED_KEYS)
 
 
 _MARKDOWN_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
@@ -437,6 +575,136 @@ def classify_role(raw_title: str, *, related_posting_id: int | None = None) -> L
         mock_args=(raw_title,),
         related_posting_id=related_posting_id,
     )
+
+
+def classify_titles_batch(
+    titles: list[str], competitor_name: str
+) -> list[dict[str, Any]]:
+    """Batch-classify a list of raw job titles for the Role Discovery workflow.
+
+    Returns a list of dicts shaped
+    ``{"title", "bucket", "confidence", "reasoning"}`` — one per input title, in
+    input order (best-effort: if the model drops a title we backfill it as
+    ``not_relevant`` with confidence 0 so the caller always gets a 1:1 result).
+    Each call writes one ``LlmCall`` row with ``purpose="role_discovery"`` so the
+    AI Ops page surfaces it alongside extraction/classification/narrative.
+
+    The empty-list short-circuit avoids burning a call on zero work — callers
+    (the orchestrator) batch in ~20s and may have a degenerate empty batch.
+    """
+    if not titles:
+        return []
+    prompt = (
+        "You are helping expand a wage-comparison scraper's keyword set. For each job "
+        "title below, decide whether it represents an OUTDOOR role (yard / lot / "
+        "warehouse / driver — entry-level physical work outside or in a warehouse), "
+        "an INDOOR role (cashier / clerk / office / customer service — entry-level "
+        "register or desk work), or NOT_RELEVANT (management, professional, software, "
+        "anything not an entry-level frontline role). Respond with JSON matching the "
+        "schema; one classification per title, preserving the input title string "
+        "verbatim.\n\n"
+        f"Competitor: {competitor_name}\n\n"
+        "Titles:\n" + "\n".join(f"- {t}" for t in titles)
+    )
+    result = _run(
+        purpose="role_discovery",
+        prompt=prompt,
+        schema=ROLE_DISCOVERY_SCHEMA,
+        mock_fn=_mock_classify_titles_batch,
+        mock_args=(titles, competitor_name),
+        related_posting_id=None,
+    )
+    parsed = result.parsed.get("classifications", []) if result.parsed else []
+    # Normalize into title-keyed map so we can backfill missing rows. The model
+    # occasionally drops a title from a long batch — better to surface that
+    # rather than crash the orchestrator on a missing element.
+    by_title: dict[str, dict[str, Any]] = {}
+    for row in parsed:
+        if isinstance(row, dict) and isinstance(row.get("title"), str):
+            by_title[row["title"]] = row
+    out: list[dict[str, Any]] = []
+    for t in titles:
+        row = by_title.get(t)
+        if row is None:
+            out.append({
+                "title": t,
+                "bucket": "not_relevant",
+                "confidence": 0.0,
+                "reasoning": "LLM did not return a classification for this title",
+            })
+        else:
+            bucket = row.get("bucket") if row.get("bucket") in {"outdoor", "indoor", "not_relevant"} else "not_relevant"
+            try:
+                conf = float(row.get("confidence", 0.0))
+            except (TypeError, ValueError):
+                conf = 0.0
+            conf = max(0.0, min(1.0, conf))
+            out.append({
+                "title": t,
+                "bucket": bucket,
+                "confidence": conf,
+                "reasoning": str(row.get("reasoning", "") or ""),
+            })
+    return out
+
+
+def extract_titles_from_search_results(
+    results: list[dict[str, str]], competitor_name: str
+) -> list[str]:
+    """Extract distinct job-title strings from a batch of web-search result snippets.
+
+    Input: a list of ``{title, snippet, url}`` dicts (the contract returned by
+    ``app.services.web_search.search``). The LLM reads them and returns the
+    union of role titles mentioned, skipping generic phrases like "jobs" or
+    "apply now". Each call writes one ``LlmCall`` row with
+    ``purpose='role_discovery_web_extract'`` so the AI Ops page surfaces V2
+    alongside the rest of the pipeline.
+
+    Returns a deduped, order-preserving list of title strings. Empty input
+    short-circuits to ``[]`` (no LLM call) to keep zero-result searches free.
+    """
+    if not results:
+        return []
+    # Build a compact bulleted blob from the snippets — title + snippet text
+    # are what actually carry role-title signal. URLs help dedupe at the
+    # caller level but aren't useful to the extractor here.
+    lines = []
+    for r in results:
+        title = (r.get("title") or "").strip()
+        snippet = (r.get("snippet") or "").strip()
+        if title or snippet:
+            lines.append(f"- {title}\n  {snippet}")
+    snippets_blob = "\n".join(lines)
+    prompt = (
+        "Given these web search result snippets about a competitor's job "
+        "postings, extract the list of distinct job title strings mentioned. "
+        "Return JSON: {titles: [string, ...]}. Skip generic phrases like "
+        "'jobs', 'careers', 'apply now', 'hiring'. Real titles only — names "
+        "of specific roles you would see on a careers page (e.g. 'Cashier', "
+        "'Warehouse Associate', 'Forklift Driver').\n\n"
+        f"Competitor: {competitor_name}\n\n"
+        "Search results:\n" + snippets_blob
+    )
+    result = _run(
+        purpose="role_discovery_web_extract",
+        prompt=prompt,
+        schema=WEB_EXTRACT_SCHEMA,
+        mock_fn=_mock_web_extract,
+        mock_args=(snippets_blob,),
+        related_posting_id=None,
+    )
+    raw_titles = result.parsed.get("titles", []) if result.parsed else []
+    out: list[str] = []
+    seen: set[str] = set()
+    for t in raw_titles:
+        if not isinstance(t, str):
+            continue
+        cleaned = t.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        out.append(cleaned)
+    return out
 
 
 def generate_narrative(facts: dict[str, Any]) -> LlmResult:
