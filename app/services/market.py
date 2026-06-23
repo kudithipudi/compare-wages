@@ -5,8 +5,11 @@ suitable for template rendering and JSON endpoints.
 """
 from __future__ import annotations
 
+import logging
+import time
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime
 from statistics import mean
 from typing import Any
 
@@ -16,6 +19,14 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models import BeaRpp, Competitor, CompetitorLocation, CopartLocation, JobPosting
 from app.services.geo import haversine_miles
+
+log = logging.getLogger(__name__)
+
+# all_yard_summaries is on the home-page hot path. If it slips above this
+# threshold the page goes from snappy to noticeably slow — emit a WARNING
+# canary so the regression is visible on /admin/logs without instrumenting
+# every caller.
+_SUMMARIES_SLOW_THRESHOLD_S = 1.0
 
 
 def _midpoint(p: JobPosting) -> float:
@@ -327,3 +338,92 @@ def total_live_observations(s: Session) -> int:
         .where(JobPosting.source_tier != "seed")
         .where(JobPosting.wage_low.is_not(None))
     ).scalar() or 0
+
+
+def total_live_postings(s: Session) -> int:
+    """Count of all non-seed postings, regardless of wage extraction.
+
+    Pairs with ``total_live_observations`` to surface the wage-extraction
+    coverage on the freshness chip (``X wages from Y postings``).
+    """
+    return s.execute(
+        select(func.count(JobPosting.id))
+        .where(JobPosting.source_tier != "seed")
+    ).scalar() or 0
+
+
+def write_wage_snapshots(s: Session) -> int:
+    """Snapshot every active yard's current blended wage + gap.
+
+    Called at the end of each ingestion run by ``run_ingestion``. Reuses the
+    already-computed all-yard summary so we don't re-do the IDW math here.
+    Returns the count of snapshots written. Calls ``s.flush()`` so callers
+    can immediately query the new rows back in the same session (tests + the
+    overview render right after a manual snapshot trigger).
+    """
+    from app.models import WageSnapshot
+    summaries = all_yard_summaries(s, include_observations=False)
+    now = datetime.utcnow()
+    for sm in summaries:
+        s.add(WageSnapshot(
+            yard_id=sm["yard"]["id"],
+            captured_at=now,
+            copart_wage=sm["yard"]["copart_wage"],
+            blended_competitive_wage=sm["blended_competitive_wage"],
+            gap=sm["gap"],
+            observation_count=sm["observation_count"],
+            pressure_quartile=sm.get("pressure_quartile", 0),
+        ))
+    s.flush()
+    log.info("wage snapshots written: %d yards", len(summaries))
+    return len(summaries)
+
+
+def snapshot_series_for_yard(s: Session, yard_id: int, *, limit: int = 12) -> list[dict[str, Any]]:
+    """Return the last N snapshots for a yard, oldest→newest. Suitable for
+    sparkline rendering.
+    """
+    from app.models import WageSnapshot
+    rows = list(s.execute(
+        select(WageSnapshot)
+        .where(WageSnapshot.yard_id == yard_id)
+        .order_by(WageSnapshot.captured_at.desc())
+        .limit(limit)
+    ).scalars())
+    rows.reverse()
+    return [
+        {
+            "captured_at": r.captured_at.isoformat(),
+            "blended_competitive_wage": r.blended_competitive_wage,
+            "copart_wage": r.copart_wage,
+            "gap": r.gap,
+            "observation_count": r.observation_count,
+        }
+        for r in rows
+    ]
+
+
+def national_gap_series(s: Session, *, limit: int = 12) -> list[dict[str, Any]]:
+    """Mean gap across all yards, bucketed by captured_at. Powers the
+    overview sparkline. Returns oldest→newest list of ``{ts, gap, n_yards}``.
+    """
+    from app.models import WageSnapshot
+    rows = list(s.execute(
+        select(
+            WageSnapshot.captured_at,
+            func.avg(WageSnapshot.gap).label("avg_gap"),
+            func.count(WageSnapshot.id).label("n_yards"),
+        )
+        .group_by(WageSnapshot.captured_at)
+        .order_by(WageSnapshot.captured_at.desc())
+        .limit(limit)
+    ).all())
+    rows.reverse()
+    return [
+        {
+            "captured_at": r.captured_at.isoformat() if r.captured_at else "",
+            "gap": round(float(r.avg_gap or 0.0), 2),
+            "n_yards": int(r.n_yards or 0),
+        }
+        for r in rows
+    ]

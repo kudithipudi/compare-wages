@@ -87,7 +87,7 @@ def _reset_wages(s) -> None:
         update(JobPosting).values(
             wage_low=None, wage_high=None, wage_unit=None,
             extraction_confidence=None, role_bucket=None,
-            normalized_role=None, classification_confidence=None,
+            normalized_role=None,
         )
     )
 
@@ -216,6 +216,43 @@ def test_mark_orphaned_runs_failed_handles_interrupted_runs(seeded_session):
         assert orphan.status == "failed"
         assert orphan.finished_at is not None
         assert "interrupted" in orphan.notes.lower()
+
+
+def test_ingestion_narrative_failure_is_surfaced_on_run(seeded_session, monkeypatch):
+    """A broken narrative LLM call must NOT silently swallow the failure.
+
+    The narrative step happens at the tail of every run; if `generate_narrative` raises
+    (stale model id, OpenRouter 404, etc.) the exec dashboard would otherwise keep
+    showing the last good narrative forever with no visible signal. We expect:
+
+      1. The run still completes with status="success" (narrative is a tail step,
+         not blocking — extraction is the meat).
+      2. The failure is stamped into `run.notes` so /admin/runs/{id} surfaces it.
+
+    We patch `app.services.ingestion.llm.generate_narrative` (the import inside the
+    ingestion module — patching the source module wouldn't intercept the already-bound
+    reference) to raise RuntimeError("boom").
+    """
+    with session_scope() as s:
+        s.execute(update(CopartLocation).where(CopartLocation.code == "CA-LAX").values(active=True))
+
+    def _boom(*_a, **_kw):
+        raise RuntimeError("boom")
+
+    from app.services import ingestion as _ing_mod
+    monkeypatch.setattr(_ing_mod.llm, "generate_narrative", _boom)
+
+    run_id = run_ingestion(triggered_by="test")
+
+    with session_scope() as s:
+        run = s.get(ScrapeRun, run_id)
+        # Narrative failure is a tail step — extraction still succeeded.
+        assert run.status == "success"
+        # Operator-visible signal on /admin/runs/{id}.
+        assert run.notes is not None
+        assert "narrative_failed" in run.notes
+        assert "RuntimeError" in run.notes
+        assert "boom" in run.notes
 
 
 def test_ingestion_yard_scoped_empty_list_fails_cleanly(seeded_session):

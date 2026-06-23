@@ -4,9 +4,12 @@ To trigger a scrape for a competitor: look up via `get_scraper(competitor.name)`
 """
 from __future__ import annotations
 
+import logging
 from typing import Callable
 
 from app.scrapers.base import Scraper
+
+log = logging.getLogger(__name__)
 
 SCRAPERS: dict[str, type[Scraper]] = {}
 

@@ -116,12 +116,11 @@ class JobPosting(Base):
     raw_title: Mapped[str] = mapped_column(String)
     normalized_role: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     role_bucket: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # outdoor|indoor
-    classification_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     wage_low: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     wage_high: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     wage_unit: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # hourly|annual
     extraction_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    source_tier: Mapped[str] = mapped_column(String, default="sample")  # employer_owned|aggregator|press|sample
+    source_tier: Mapped[str] = mapped_column(String, default="sample")  # "seed" (synthetic, demo only) | "employer_owned" (live scrape)
     source_url: Mapped[str] = mapped_column(String, default="")
     raw_html_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     posted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -137,14 +136,14 @@ class BeaRpp(Base):
 
 
 class ZipCbsa(Base):
-    """HUD USPS ZIP→CBSA crosswalk. One row per ZIP (collapsed: highest bus_ratio wins).
+    """HUD USPS ZIP→CBSA crosswalk. One row per ZIP (the load step collapses
+    multi-ZIP rows by picking the highest bus_ratio winner).
     Source: HUD USPS API (https://www.huduser.gov/portal/dataset/uspszip-api.html).
     """
     __tablename__ = "zip_cbsa"
 
     zip: Mapped[str] = mapped_column(String, primary_key=True)
     cbsa_code: Mapped[str] = mapped_column(String, index=True)
-    bus_ratio: Mapped[float] = mapped_column(Float, default=0.0)
     city: Mapped[str] = mapped_column(String, default="")
     state: Mapped[str] = mapped_column(String, default="")
 
@@ -156,7 +155,6 @@ class CbsaName(Base):
 
     cbsa_code: Mapped[str] = mapped_column(String, primary_key=True)
     cbsa_title: Mapped[str] = mapped_column(String)
-    cbsa_kind: Mapped[str] = mapped_column(String, default="metro")  # metro|micro|other
 
 
 class BlsOewsWage(Base):
@@ -264,3 +262,22 @@ class Narrative(Base):
     body: Mapped[str] = mapped_column(Text)
     grounding: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class WageSnapshot(Base):
+    """A point-in-time record of a yard's blended competitive wage + gap.
+
+    Written by the ingestion orchestrator at the end of every run. Lets the
+    dashboard show trends ("gap widened from +$0.40 to +$1.40 over 8 weeks")
+    instead of just today's still photo. One row per (yard, run) tuple.
+    """
+    __tablename__ = "wage_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    yard_id: Mapped[int] = mapped_column(ForeignKey("copart_locations.id"), index=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    copart_wage: Mapped[float] = mapped_column(Float)
+    blended_competitive_wage: Mapped[float] = mapped_column(Float, default=0.0)
+    gap: Mapped[float] = mapped_column(Float, default=0.0)
+    observation_count: Mapped[int] = mapped_column(Integer, default=0)
+    pressure_quartile: Mapped[int] = mapped_column(Integer, default=0)

@@ -8,6 +8,7 @@ visible in the AI Ops view.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ import httpx
 from app.config import get_settings
 from app.db import session_scope
 from app.models import LlmCall, LlmModelConfig
+
+log = logging.getLogger(__name__)
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -111,6 +114,10 @@ def _call_openrouter(prompt: str, json_schema: dict | None, model: str, temperat
     started = time.perf_counter()
     for attempt, wait in enumerate(backoffs):
         if wait:
+            log.warning(
+                "llm._run retry %d/%d after %.1fs: %s",
+                attempt + 1, len(backoffs), wait, last_exc,
+            )
             time.sleep(wait)
         try:
             with httpx.Client(timeout=30.0) as client:
@@ -327,6 +334,13 @@ def _mock_narrative(facts: dict[str, Any]) -> dict[str, Any]:
 # the wire schema (keeps OpenAI happy) and apply a looser, server-side check via
 # *_REQUIRED_KEYS below that only enforces load-bearing fields. Consumers fill defaults
 # for the rest.
+# NOTE: Anthropic's structured-output endpoint rejects ``minimum``/``maximum``
+# constraints on ``"number"`` types (returns
+# ``output_config.format.schema: For 'number' type, properties maximum, minimum
+# are not supported``). OpenAI tolerates them but doesn't enforce them either —
+# strict mode only enforces required + property shape. So we drop them from the
+# wire schemas and clamp ``confidence`` server-side in :func:`_clamp_confidence`
+# below.
 WAGE_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -335,7 +349,7 @@ WAGE_SCHEMA = {
         "wage_high": {"type": "number"},
         "wage_unit": {"type": "string", "enum": ["hourly", "annual"]},
         "role": {"type": "string"},
-        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "confidence": {"type": "number"},
         "reasoning": {"type": "string"},
     },
     "required": ["wage_low", "wage_high", "wage_unit", "role", "confidence", "reasoning"],
@@ -348,7 +362,7 @@ CLASSIFY_SCHEMA = {
     "properties": {
         "normalized_role": {"type": "string"},
         "bucket": {"type": "string", "enum": ["outdoor", "indoor"]},
-        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "confidence": {"type": "number"},
         "reasoning": {"type": "string"},
     },
     "required": ["normalized_role", "bucket", "confidence", "reasoning"],
@@ -384,7 +398,7 @@ ROLE_DISCOVERY_SCHEMA = {
                         "type": "string",
                         "enum": ["outdoor", "indoor", "not_relevant"],
                     },
-                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "confidence": {"type": "number"},
                     "reasoning": {"type": "string"},
                 },
                 "required": ["title", "bucket", "confidence", "reasoning"],
@@ -460,11 +474,30 @@ def _tolerant_json_parse(raw: str) -> dict:
     return json.loads(m.group(0))
 
 
+def _clamp_confidence(parsed: dict) -> None:
+    """Coerce ``confidence`` (and any nested list-of-objects' confidence) to
+    [0.0, 1.0] in-place. Wire schemas used to enforce these bounds via
+    ``minimum``/``maximum``, but Anthropic's structured-output endpoint rejects
+    those properties on ``"number"`` types — we now bound them server-side.
+    """
+    if not isinstance(parsed, dict):
+        return
+    if isinstance(parsed.get("confidence"), (int, float)):
+        parsed["confidence"] = max(0.0, min(1.0, float(parsed["confidence"])))
+    # Role-discovery batch shape: {"classifications": [{"confidence": ...}, …]}
+    cls = parsed.get("classifications")
+    if isinstance(cls, list):
+        for row in cls:
+            if isinstance(row, dict) and isinstance(row.get("confidence"), (int, float)):
+                row["confidence"] = max(0.0, min(1.0, float(row["confidence"])))
+
+
 def _validate(parsed: dict, schema: dict) -> tuple[bool, str]:
     required = _REQUIRED_KEYS_BY_SCHEMA.get(id(schema), tuple(schema.get("required", [])))
     for key in required:
         if key not in parsed:
             return False, f"missing key: {key}"
+    _clamp_confidence(parsed)
     return True, ""
 
 
@@ -477,6 +510,12 @@ def _run(
     mock_args: tuple,
     related_posting_id: int | None,
 ) -> LlmResult:
+    target_model_for_log, _ = _resolve_model(purpose)
+    log.debug(
+        "llm._run purpose=%s model=%s tokens_in≈%d",
+        purpose, target_model_for_log, _approx_tokens(prompt),
+    )
+
     if _should_mock():
         started = time.perf_counter()
         parsed = mock_fn(*mock_args)
@@ -497,6 +536,18 @@ def _run(
             validation_error=err,
         )
         _log_call(purpose=purpose, prompt=prompt, result=result, related_posting_id=related_posting_id)
+        if not ok:
+            # Used to be DB-only — mirror to the stream so /admin/logs can
+            # show validation regressions without crossing to /admin/ai-ops.
+            log.warning(
+                "llm._run validation_error purpose=%s (mocked): %s",
+                purpose, err,
+            )
+        else:
+            log.info(
+                "llm._run ok purpose=%s latency=%dms cost=$%.4f",
+                purpose, result.latency_ms, result.cost_usd,
+            )
         return result
 
     target_model, temperature = _resolve_model(purpose)
@@ -517,6 +568,10 @@ def _run(
             validation_ok=False, validation_error=f"{type(e).__name__}: {e}",
         )
         _log_call(purpose=purpose, prompt=prompt, result=result, related_posting_id=related_posting_id)
+        log.warning(
+            "llm._run transport failure purpose=%s model=%s: %s: %s",
+            purpose, target_model, type(e).__name__, e,
+        )
         raise
 
     try:
@@ -530,6 +585,10 @@ def _run(
             validation_ok=False, validation_error=f"{type(e).__name__}: {e}",
         )
         _log_call(purpose=purpose, prompt=prompt, result=result, related_posting_id=related_posting_id)
+        log.warning(
+            "llm._run parse failure purpose=%s model=%s: %s: %s",
+            purpose, model, type(e).__name__, e,
+        )
         raise
 
     cost = (t_in / 1000.0) * COST_PER_1K_IN + (t_out / 1000.0) * COST_PER_1K_OUT
@@ -539,6 +598,16 @@ def _run(
         validation_ok=ok, validation_error=err,
     )
     _log_call(purpose=purpose, prompt=prompt, result=result, related_posting_id=related_posting_id)
+    if not ok:
+        log.warning(
+            "llm._run validation_error purpose=%s model=%s: %s",
+            purpose, model, err,
+        )
+    else:
+        log.info(
+            "llm._run ok purpose=%s latency=%dms cost=$%.4f",
+            purpose, latency, cost,
+        )
     return result
 
 

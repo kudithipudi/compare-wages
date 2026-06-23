@@ -3,7 +3,7 @@
 Internal dashboard that compares ACME's entry-level wages to local labor-market competitors at each yard. Built to be shown to the C-suite and to demonstrate how to assemble an AI-powered web application using LLMs as **functional components in a deterministic pipeline** (not autonomous agents).
 
 - **Audience:** internal execs, "are we paying enough to attract talent?"
-- **Data philosophy:** free sources only — employer career sites (real Playwright scrapers; today Home Depot) + BEA RPP + BLS OEWS state-level baseline. Aggregators (Indeed etc.) are clearly labeled lower-trust fallback. No paid datasets.
+- **Data philosophy:** free sources only — employer career sites (real Playwright scrapers; today Home Depot) + BEA RPP + BLS OEWS state-level baseline. No paid datasets.
 - **AI surface:** wage extraction, title classification, executive narrative — each step picks its own model.
 - **Locations covered (seeded):** 154 real acme yards across 49 states.
 - **Competitors (seeded):** Walmart, Amazon, Home Depot, Costco, Starbucks.
@@ -404,7 +404,27 @@ So the operator's surface for "what should the Home Depot scraper search for?" i
 
 `/admin/role-discovery` is the mining-then-review surface that closes the loop with `/admin/role-mappings`. Scrapers always pull adjacent titles incidentally (search-result overspill that wasn't in the keyword list); those titles land in `job_postings.raw_title` and just sit there. Click **Run discovery** (per competitor or all) and `app/services/role_discovery.py:discover_from_existing_postings` walks the unmapped titles, batches them through the LLM (`purpose="role_discovery"`, ~20/batch), and queues each one as a pending `RoleDiscoverySuggestion`. The page reloads with the suggestions — review each (Accept materializes a `RoleMapping` row the next scrape uses; Reject tombstones it). A **Bulk accept ≥ N%** button promotes every high-confidence outdoor/indoor suggestion in one click. The next scrape sees the new keywords automatically. Use this when ingestion runs show titles you didn't expect, or after a competitor's careers site adds new role names.
 
-**Web-search discovery (V2).** The button next to "Run discovery" is **Run web search** — it solves V1's bootstrap problem (a competitor with zero scraped postings has nothing for V1 to mine). `discover_from_web_search` (`app/services/role_discovery.py`) issues a small set of seed queries against a generic web search engine for each competitor, then asks the LLM (`purpose="role_discovery_web_extract"`) to pull distinct job-title strings out of the result snippets. The extracted titles flow through the same `classify_titles_batch` V1 uses, so bucket rules don't fork between the two paths. Results land in the same suggestion queue with `source="web_search"` (visible as a green pill on each card; the Source chip row at the top filters by it). Backend is configurable via `SEARCH_BACKEND` — defaults to `ddg` (zero-config `duckduckgo-search` package, no API key needed). For higher-quality results set `SEARCH_BACKEND=tavily` (or `brave`) + `SEARCH_API_KEY=...` in `.env`. Search results are cached on disk for 1 hour (`data/.search_cache/`, gitignored) so re-running during operator review doesn't re-hammer the backend. Use web search when "existing postings" has run dry — e.g. a freshly-added competitor whose scrapers haven't run yet, or when you suspect a competitor's keyword coverage feels thin.
+**Web-search discovery (V2).** The button next to "Run discovery" is **Run web search** — it solves V1's bootstrap problem (a competitor with zero scraped postings has nothing for V1 to mine). `discover_from_web_search` (`app/services/role_discovery.py`) issues a small set of seed queries against a generic web search engine for each competitor, then asks the LLM (`purpose="role_discovery_web_extract"`) to pull distinct job-title strings out of the result snippets. The extracted titles flow through the same `classify_titles_batch` V1 uses, so bucket rules don't fork between the two paths. Results land in the same suggestion queue with `source="web_search"` (visible as a green pill on each card; the Source chip row at the top filters by it). Backed by DuckDuckGo via the `duckduckgo-search` package. Results cached locally for 1 hour. Use web search when "existing postings" has run dry — e.g. a freshly-added competitor whose scrapers haven't run yet, or when you suspect a competitor's keyword coverage feels thin.
+
+### Wage drift over time (snapshots)
+
+Every ingestion run ends with `app.services.market.write_wage_snapshots`, which writes one `WageSnapshot` row per active yard capturing `copart_wage`, `blended_competitive_wage`, `gap`, `observation_count`, and `pressure_quartile` at that moment. The dashboard reads the last 12 snapshots for two things:
+
+- **Overview** — a sparkline embedded in the National Gap KPI tile + a `+/-$X wow` delta chip comparing today's gap vs the previous snapshot.
+- **Yard detail** — same sparkline + delta chip inside the headline gap card on `/location/<code>`.
+
+Snapshots are independent of `Narrative`. A narrative regeneration failure does not block snapshot writes (and vice versa). At weekly scheduling that's ~3.8K rows/year for 73 active yards — trivial for SQLite. Free side effect: the architect's "narrative silently swallows exceptions" risk is now belt-and-braces because the snapshot write succeeds even when the narrative path 404s.
+
+### Freshness honesty
+
+Two tiny but important truth-in-advertising fixes on the public surface:
+
+- The top-bar chip now reads `"<wages> wages from <postings> postings · refreshed <relative>"` instead of just "live observations". The wages-to-postings ratio is the honest data confidence signal — today ~13%, mostly because non-pay-transparency states don't disclose ranges in postings. The Jinja filter `freshness_class` (and companion `freshness_dot_class`) flips the chip background through emerald → amber (>48h) → rose (>7d) so a stale dashboard reads stale at a glance.
+- Yards with zero in-radius observations no longer render a confusing "Q—" pill and a blank gap cell. They get a dotted left border + a `pill-slate "no data"` badge so the eye reads "this row is unevaluable" before getting to the numbers. The `_quartile()` semantics (returning 0 for no-data) are unchanged.
+
+### What-if simulator (wage raise)
+
+`/` has a collapsed sticky bar at the bottom — click to expand the **What-if simulator**: a state dropdown + wage-delta slider (-$3 to +$5 in $0.25 steps). The Alpine component recomputes every in-scope yard's hypothetical gap against the full national pressure-quartile distribution and shows how many Q1 yards would exit that bucket, plus a placeholder annualized cost (`12 FTE/yard × 2080 hrs/yr`, surfaced as a tooltipped placeholder until a real `fte_count` field lands on `CopartLocation`). 100% client-side — the data is already in the `yards-json` script tag the map uses. Zero new server routes.
 
 ### Add a competitor scraper
 
@@ -484,6 +504,34 @@ DATABASE_URL=sqlite:///./data/wages_dev.db .venv/bin/uvicorn app.main:app --relo
 For ad-hoc Python scripts in the same checkout, always export `DATABASE_URL=sqlite:///./data/wages_dev.db` first or use a sub-shell.
 
 **Schema is now Alembic-managed in prod.** For dev/test the first boot's `init_db()` (a plain `Base.metadata.create_all`) is still convenient and stays — it bootstraps a fresh SQLite file from `app/models.py` with no migration ceremony. **In production the schema is established and evolved by `alembic upgrade head`**, not by `init_db()`. The two are kept in lock-step because both ultimately read `app/models.py`; the day they drift, `.venv/bin/alembic check` will say so. See **Schema migrations** under Deployment for the workflow.
+
+## Logging
+
+Three log files live under `logs/`:
+
+- `logs/access.log` — gunicorn HTTP access log (request-level).
+- `logs/error.log` — gunicorn worker stderr (uncaught exceptions, startup banners).
+- `logs/app.log` — structured app log written by every `logging.getLogger(__name__)` in the codebase. Rotating: 10 MB per file, 5 backups (~50 MB ceiling).
+
+The format is `<asctime> <LEVEL> [<op_id>] <logger> :: <message>`. The `op_id` tag is `-` for normal request handling and `<kind>/<8-hex>` for orchestrator runs (`ingest/3a9f01bc`, `scrape/…`, `discover_db/…`, `discover_web/…`). It propagates across threads and async boundaries via `contextvars`, so every line emitted inside one `run_ingestion` call shares a single id — making it possible to follow one operator click end-to-end.
+
+**Reading logs:**
+
+- **`/admin/logs`** — operator UI. Filter by level, module substring, or op_id. Click any op_id pill to scope the view to that one run. No auto-refresh (manual button — keeps load predictable).
+- **`tail -f logs/app.log`** — on the box, for debugging during a deploy.
+- `journalctl -u compare-wages` — also captures everything (the app logs to stdout *and* the file, since the rotating file handler is best-effort and silently degrades to stdout-only if `logs/` isn't writable).
+
+**Bumping log level:**
+
+```bash
+# Temporarily, until next restart:
+sudo systemctl set-environment LOG_LEVEL=DEBUG
+sudo systemctl restart compare-wages
+
+# Permanently — add LOG_LEVEL=DEBUG to /var/www/compare-wages/.env.
+```
+
+Default is `INFO`. The chatty third-party loggers (`httpx`, `httpcore`, `urllib3`, `apscheduler.*`) are pinned to `WARNING` so debug-level still reads cleanly.
 
 ## Testing
 

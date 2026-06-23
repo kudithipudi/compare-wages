@@ -31,11 +31,11 @@
       </nav>
 
       <div class="flex items-center gap-3">
-        <div class="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-xs text-emerald-800">
-          <span class="fresh-dot"></span>
+        <div class="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs {{ last_observation_at | freshness_class }}">
+          <span class="{{ last_observation_at | freshness_dot_class }}"></span>
           <span class="font-semibold num">{{ total_observations }}</span>
-          <span class="text-emerald-700/80">live observations</span>
-          <span class="text-emerald-700/40">·</span>
+          <span class="opacity-80">wages from {{ total_postings }} postings</span>
+          <span class="opacity-40">·</span>
           <span>refreshed {{ last_observation_at | relative_time }}</span>
         </div>
       </div>
@@ -59,7 +59,9 @@
     </div>
   </header>
 
-  <main class="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12 space-y-10 lg:space-y-14">
+  {# Bottom padding accommodates the collapsed what-if simulator panel
+     (≈48px tall on desktop, ≈64px on mobile where the summary line wraps). #}
+  <main class="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12 space-y-10 lg:space-y-14 pb-24 lg:pb-20">
 
     {# ─── Headline + KPI tiles ─── #}
     <section>
@@ -99,12 +101,45 @@
           <div class="text-xs text-slate-500 mt-1">active across <span class="num">{{ state_rollup | length }}</span> states</div>
         </div>
         <div class="card p-5">
-          <div class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">National gap</div>
+          <div class="flex items-baseline justify-between">
+            <div class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">National gap</div>
+            {% if gap_series and gap_series | length > 1 %}
+              {% set prev_gap = gap_series[-2].gap %}
+              {% set delta = facts.national_wage_gap - prev_gap %}
+              <span class="text-[10px] num font-semibold
+                {% if delta > 0 %}gap-neg{% elif delta < 0 %}gap-pos{% else %}gap-flat{% endif %}"
+                title="vs previous snapshot">
+                {% if delta > 0 %}+{% elif delta < 0 %}−{% endif %}${{ '%.2f' | format(delta | abs) }} wow
+              </span>
+            {% endif %}
+          </div>
           <div class="display-num text-3xl sm:text-4xl mt-2 font-semibold
             {% if facts.national_wage_gap > 0 %}gap-neg{% elif facts.national_wage_gap < 0 %}gap-pos{% else %}gap-flat{% endif %}">
             {{ facts.national_wage_gap | signed_money }}
           </div>
-          <div class="text-xs text-slate-500 mt-1">per hour, blended &amp; weighted</div>
+          {% if gap_series and gap_series | length > 1 %}
+            <div class="mt-2">
+              <svg viewBox="0 0 100 24" preserveAspectRatio="none" class="w-full h-6">
+                {% set vals = gap_series | map(attribute='gap') | list %}
+                {% set mn = vals | min %}
+                {% set mx = vals | max %}
+                {% set rng = (mx - mn) if (mx - mn) > 0 else 1 %}
+                {% set n = vals | length %}
+                {% set step = (100.0 / (n - 1)) if n > 1 else 0 %}
+                {% set points = [] %}
+                {% for v in vals %}
+                  {% set y = 22 - ((v - mn) / rng) * 20 %}
+                  {% set _ = points.append((loop.index0 * step) ~ ',' ~ ('%.2f' | format(y))) %}
+                {% endfor %}
+                <polyline points="{{ points | join(' ') }}" fill="none"
+                  stroke="{% if facts.national_wage_gap > 0 %}var(--accent){% else %}#047857{% endif %}"
+                  stroke-width="1.5" />
+              </svg>
+              <div class="text-[10px] text-slate-400 mt-0.5 num">{{ gap_series | length }} snapshots</div>
+            </div>
+          {% else %}
+            <div class="text-xs text-slate-500 mt-1">per hour, blended &amp; weighted</div>
+          {% endif %}
         </div>
         <div class="card p-5">
           <div class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">Most pressured state</div>
@@ -313,7 +348,14 @@
               data-s_obs="{{ sm.observation_count }}"
               class="hover:bg-slate-50 transition cursor-pointer"
               onclick="window.location='{{ prefix }}/location/{{ y.code }}'">
-              <td class="q-cell q-cell-{{ sm.pressure_quartile }}"></td>
+              {# Unevaluable yards (zero in-radius observations) get a dotted
+                 left border instead of a solid quartile bar so the row reads
+                 as "no data" rather than "moderate pressure". #}
+              {% if sm.observation_count == 0 %}
+                <td class="q-cell border-l-2 border-dashed border-slate-300 bg-slate-50/40"></td>
+              {% else %}
+                <td class="q-cell q-cell-{{ sm.pressure_quartile }}"></td>
+              {% endif %}
               <td class="px-4 py-3.5">
                 <div class="num text-xs text-slate-500 tracking-wider uppercase">{{ y.code }}</div>
               </td>
@@ -332,7 +374,7 @@
                     {{ sm.gap | signed_money }}
                   </span>
                 {% else %}
-                  <span class="text-slate-300">—</span>
+                  <span class="pill pill-slate" title="No competitor postings within radius — this row is unevaluable.">no data</span>
                 {% endif %}
               </td>
               <td class="px-3 py-3.5 text-right num text-slate-500 text-xs">{{ '%.2f' | format(sm.rpp) }}</td>
@@ -398,6 +440,74 @@
       <div class="text-slate-400">v1.0</div>
     </footer>
   </main>
+
+  {# ─── What-if simulator (sticky bottom panel) ─────────────────────────────
+     Client-side only. Reads yards-json (the same payload the map uses),
+     applies a wage delta to a chosen state, re-quartiles the gap distribution
+     across the full national set, and reports how many Q1 yards exit pressure.
+
+     Heuristic for "exits Q1": after applying delta to the selected scope only,
+     the entire gap distribution is re-quartiled (Q1 = top 25% by gap, i.e.
+     largest deficit). A yard "exits Q1" if its new quartile is no longer 1.
+     This mirrors the server's quartile assignment in app/services/market.py
+     and stays honest at small deltas (some yards bubble down to Q2 while
+     others remain). Cost projection uses a hardcoded 12 FTE/yard × 2080
+     hrs/yr placeholder until per-yard FTE data lands on CopartLocation.
+     ───────────────────────────────────────────────────────────────────── #}
+  <aside x-data="whatIf()" x-init="init()"
+         class="fixed bottom-0 left-0 right-0 z-20 bg-white/95 backdrop-blur border-t border-slate-200 shadow-[0_-4px_16px_-4px_rgba(15,23,42,0.08)]">
+    <div class="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-2.5">
+      {# Collapsed header (always visible — acts as the toggle). #}
+      <button @click="open = !open" type="button"
+              class="flex items-center gap-3 w-full text-left group"
+              :aria-expanded="open.toString()" aria-controls="whatif-body">
+        <span class="text-[10px] uppercase tracking-[0.18em] font-semibold text-slate-500 whitespace-nowrap">What-if simulator</span>
+        <span class="hidden sm:inline text-xs text-slate-500 num truncate" x-text="summary"></span>
+        <span class="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500 group-hover:text-slate-900 transition whitespace-nowrap">
+          <span x-text="open ? 'Hide' : 'Simulate a raise'"></span>
+          <span class="text-slate-400" x-text="open ? '↓' : '↑'"></span>
+        </span>
+      </button>
+
+      {# Expanded controls. #}
+      <div id="whatif-body" x-show="open" x-cloak x-transition.duration.150ms
+           class="mt-3 pt-3 border-t border-slate-100 grid gap-4 sm:gap-5 sm:grid-cols-[160px_minmax(0,1fr)_auto] items-end">
+        <label class="field">
+          <span class="field-label">State</span>
+          <select x-model="state" @change="recompute()" class="field-input bg-white !py-1.5 !text-sm">
+            <option value="all">All states</option>
+            <template x-for="st in states" :key="st">
+              <option :value="st" x-text="st"></option>
+            </template>
+          </select>
+        </label>
+
+        <label class="field">
+          <span class="field-label flex items-baseline justify-between gap-2">
+            <span>Wage delta</span>
+            <span class="num text-slate-700 normal-case tracking-normal text-xs font-semibold"
+                  x-text="(delta >= 0 ? '+$' : '−$') + Math.abs(delta).toFixed(2) + '/hr'"></span>
+          </span>
+          <input type="range" min="-3" max="5" step="0.25" x-model.number="delta" @input="recompute()"
+                 aria-label="Hourly wage delta"
+                 class="w-full accent-[color:var(--accent)] cursor-pointer" />
+          <div class="flex justify-between text-[10px] text-slate-400 num mt-1">
+            <span>−$3.00</span><span>$0</span><span>+$5.00</span>
+          </div>
+        </label>
+
+        <div class="text-sm min-w-0 sm:min-w-[220px]">
+          <div class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">Impact</div>
+          <div class="mt-1 leading-snug">
+            <div class="font-semibold text-slate-900 num" x-text="yardsImpactedText"></div>
+            <div class="text-xs text-slate-500 mt-0.5 num"
+                 x-text="costText"
+                 :title="'Assumes ' + FTE_PER_YARD + ' FTE/yard × ' + HOURS_PER_YEAR + ' hrs/yr. Placeholder until per-yard FTE data lands on CopartLocation.'"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
 </div>
 
 {# ─── Yard JSON for map ─── #}
@@ -462,6 +572,118 @@
   }
   ready(() => { setTimeout(initMap, 30); });
 })();
+
+/* ─── What-if simulator (Alpine component) ───────────────────────────────
+   Re-quartiles the gap distribution after applying `delta` to the chosen
+   scope's wages. Uses the same percentile-rank logic the server uses in
+   app/services/market.py::_assign_quartile (Q1 = top 25% by gap).
+   ─────────────────────────────────────────────────────────────────────── */
+function whatIf() {
+  return {
+    // --- cost-projection assumptions (placeholders until per-yard FTE lands) ---
+    FTE_PER_YARD: 12,
+    HOURS_PER_YEAR: 2080,
+    // --- reactive state ---
+    open: false,
+    state: 'all',
+    delta: 0,
+    states: [],
+    allYards: [],
+    yardsImpactedText: '',
+    costText: '',
+    summary: '',
+
+    init() {
+      try {
+        const raw = document.getElementById('yards-json');
+        this.allYards = raw ? JSON.parse(raw.textContent || '[]') : [];
+      } catch (e) {
+        this.allYards = [];
+      }
+      const set = new Set();
+      this.allYards.forEach(y => { if (y && y.yard && y.yard.state) set.add(y.yard.state); });
+      this.states = Array.from(set).sort();
+      this.recompute();
+    },
+
+    // Assign quartiles to an array of {gap} objects. Q1 = highest 25% of gap
+    // (largest deficit = most pressure). Mirrors server behavior: ties resolved
+    // by sort position; empty input returns no labels.
+    _quartile(items) {
+      const n = items.length;
+      if (n === 0) return new Map();
+      const sorted = items.slice().sort((a, b) => b.gap - a.gap);  // descending
+      const labels = new Map();
+      sorted.forEach((it, i) => {
+        // rank 0 .. n-1 from top. Q = floor(rank * 4 / n) + 1, clamped to [1, 4].
+        const q = Math.min(4, Math.floor((i * 4) / n) + 1);
+        labels.set(it.key, q);
+      });
+      return labels;
+    },
+
+    recompute() {
+      const yards = this.allYards;
+      if (!yards.length) {
+        this.yardsImpactedText = 'No yard data loaded.';
+        this.costText = '';
+        this.summary = '';
+        return;
+      }
+
+      // Build a re-quartile-able view: apply delta only to yards in the chosen scope.
+      const scope = this.state;
+      const inScope = (y) => scope === 'all' || (y.yard && y.yard.state === scope);
+      const projected = yards.map((y, i) => {
+        const affected = inScope(y);
+        const newGap = affected ? (y.gap - this.delta) : y.gap;
+        return { key: i, gap: newGap, original: y, affected };
+      });
+
+      // Re-quartile the FULL national distribution against the new gaps.
+      const newQ = this._quartile(projected);
+
+      // Count Q1 yards in scope before/after. A yard "exits Q1" when it was
+      // originally Q1 and its new quartile is no longer 1.
+      let beforeQ1 = 0, exited = 0, scopeCount = 0;
+      projected.forEach(p => {
+        if (!inScope(p.original)) return;
+        scopeCount += 1;
+        if (p.original.pressure_quartile === 1) {
+          beforeQ1 += 1;
+          if ((newQ.get(p.key) || 0) !== 1) exited += 1;
+        }
+      });
+
+      // Headline.
+      if (scopeCount === 0) {
+        this.yardsImpactedText = 'No yards in this scope.';
+      } else if (beforeQ1 === 0) {
+        this.yardsImpactedText = 'No Q1 (highest-pressure) yards in this scope.';
+      } else {
+        const verb = this.delta >= 0 ? 'exit' : 'fall further into';
+        this.yardsImpactedText = exited + ' of ' + beforeQ1 + ' Q1 yards ' + verb + ' pressure.';
+      }
+
+      // Cost projection — annualized labor cost of the wage delta across affected yards.
+      // Negative delta -> savings; we still surface the absolute number with a sign.
+      const affectedYards = scopeCount;
+      const annualCost = this.delta * affectedYards * this.FTE_PER_YARD * this.HOURS_PER_YEAR;
+      if (affectedYards === 0 || this.delta === 0) {
+        this.costText = '';
+      } else {
+        const sign = annualCost >= 0 ? '+' : '−';
+        const fmt = Math.abs(annualCost).toLocaleString('en-US', { maximumFractionDigits: 0 });
+        const label = annualCost >= 0 ? 'annualized cost' : 'annualized savings';
+        this.costText = 'Est. ' + sign + '$' + fmt + ' ' + label + ' (' + this.FTE_PER_YARD + ' FTE/yard placeholder).';
+      }
+
+      // Collapsed-state summary line.
+      const deltaTxt = (this.delta >= 0 ? '+$' : '−$') + Math.abs(this.delta).toFixed(2);
+      this.summary = scopeCount + ' yards · Δ ' + deltaTxt + '/hr';
+    },
+  };
+}
 </script>
 
 {% endblock %}

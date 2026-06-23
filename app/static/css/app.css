@@ -155,6 +155,9 @@ details > summary::-webkit-details-marker { display: none; }
   box-shadow: 0 0 0 3px rgba(178, 58, 27, 0.12);
 }
 
+/* Hide Alpine elements until x-data is initialized to prevent FOUC. */
+[x-cloak] { display: none !important; }
+
 /* Key/value pair for stat strips at the bottom of cards. */
 .kv {
   display: flex; flex-direction: column; gap: 0.125rem;
@@ -274,6 +277,35 @@ details > summary::-webkit-details-marker { display: none; }
   0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.45); }
   70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
   100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+/* Stale variants — amber (>48h) and rose (>7d). Animations slow as data ages
+   so the visual urgency degrades with the signal. ``fresh-dot-slate`` is a
+   non-pulsing fallback for null timestamps. */
+.fresh-dot-amber {
+  background: #F59E0B;
+  box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
+  animation: pulseFreshAmber 2.8s infinite;
+}
+@keyframes pulseFreshAmber {
+  0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(245, 158, 11, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+}
+.fresh-dot-rose {
+  background: #E11D48;
+  box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.4);
+  animation: pulseFreshRose 3.6s infinite;
+}
+@keyframes pulseFreshRose {
+  0% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(225, 29, 72, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0); }
+}
+.fresh-dot-slate {
+  background: #94A3B8;
+  box-shadow: none;
+  animation: none;
 }
 
 /* Gap value coloring helpers — terracotta for negative (we're behind), emerald for positive. */

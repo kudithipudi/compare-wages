@@ -14,15 +14,14 @@ site is mad at us. See ``base_employer.py`` for the resilience features
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import httpx  # noqa: F401  -- imported so test patches at app.scrapers.homedepot.httpx land
 
-from app.scrapers.base_employer import (
-    BaseEmployerScraper,
-    USER_AGENT,  # noqa: F401  -- re-exported for callers/tests that imported it from here
-    parse_jobposting_jsonld as _parse_jobposting_jsonld,  # noqa: F401  -- legacy import shim
-)
+log = logging.getLogger(__name__)
+
+from app.scrapers.base_employer import BaseEmployerScraper
 from app.scrapers.registry import register
 
 # Re-export fixture directory + filename so existing tests + tooling that

@@ -29,11 +29,7 @@ from urllib.parse import urlparse
 import httpx  # noqa: F401  -- imported so test patches at app.scrapers.walmart.httpx land
 
 from app.scrapers.base import ScrapedPosting
-from app.scrapers.base_employer import (
-    BaseEmployerScraper,
-    USER_AGENT,  # noqa: F401
-    parse_jobposting_jsonld as _parse_jobposting_jsonld,  # noqa: F401
-)
+from app.scrapers.base_employer import BaseEmployerScraper
 from app.scrapers.registry import register
 
 log = logging.getLogger(__name__)

@@ -217,7 +217,6 @@ def run_seed(*, store_raw_html_to_disk: bool = True, force: bool = False) -> Non
                 for row in csv.DictReader(f):
                     s.add(ZipCbsa(
                         zip=row["zip"], cbsa_code=row["cbsa_code"],
-                        bus_ratio=float(row["bus_ratio"]),
                         city=row.get("city", ""), state=row.get("state", ""),
                     ))
                     zip_to_cbsa[row["zip"]] = row["cbsa_code"]
@@ -230,7 +229,6 @@ def run_seed(*, store_raw_html_to_disk: bool = True, force: bool = False) -> Non
                     s.add(CbsaName(
                         cbsa_code=row["cbsa_code"],
                         cbsa_title=row["cbsa_title"],
-                        cbsa_kind=row.get("cbsa_kind", "metro"),
                     ))
 
         # BLS OEWS state-level baseline (5 occupations × 51 jurisdictions)
@@ -328,7 +326,6 @@ def run_seed(*, store_raw_html_to_disk: bool = True, force: bool = False) -> Non
                             raw_title=role,
                             normalized_role=None,
                             role_bucket=None,
-                            classification_confidence=None,
                             wage_low=None,
                             wage_high=None,
                             wage_unit=None,
@@ -347,7 +344,7 @@ def run_seed(*, store_raw_html_to_disk: bool = True, force: bool = False) -> Non
 
         # Default per-purpose LLM model selection.
         s.add(LlmModelConfig(
-            purpose="extraction", model="anthropic/claude-3.5-haiku", temperature=0.1,
+            purpose="extraction", model="anthropic/claude-haiku-4.5", temperature=0.1,
             notes="Structured wage extraction — needs reliable JSON output, low cost per call.",
         ))
         s.add(LlmModelConfig(
@@ -355,7 +352,7 @@ def run_seed(*, store_raw_html_to_disk: bool = True, force: bool = False) -> Non
             notes="Title → role bucket. High volume, simple decision — pick the cheapest competent model.",
         ))
         s.add(LlmModelConfig(
-            purpose="narrative", model="anthropic/claude-3.5-haiku", temperature=0.4,
+            purpose="narrative", model="anthropic/claude-haiku-4.5", temperature=0.4,
             notes="Executive narrative. Defaulting to Haiku because it's a known-working model on OpenRouter; pick a stronger model via /admin/llm-models if your key has access.",
         ))
 

@@ -6,12 +6,15 @@ employer postings. NOT mixed into the inverse-distance weighted competitive blen
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import BlsOewsWage
+
+log = logging.getLogger(__name__)
 
 
 def baseline_for(s: Session, state: str, *, bucket: str | None = None) -> list[dict[str, Any]]:

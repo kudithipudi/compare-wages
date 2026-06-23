@@ -4,12 +4,9 @@
 {% block body %}
 {% call admin_shell("competitors") %}
 
-  {% set tiers = ["employer_owned", "aggregator", "press", "sample"] %}
+  {% set tiers = ["employer_owned"] %}
   {% set tier_pill = {
     "employer_owned": "emerald",
-    "aggregator":     "sky",
-    "press":          "amber",
-    "sample":         "slate",
   } %}
 
   <div x-data="{ open: false }">

@@ -1,4 +1,5 @@
 import logging
+import logging.handlers
 import os
 import secrets
 import sys
@@ -11,19 +12,74 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import Response
 
+from app.log_context import OperationContextFilter
+
+# Repo root + canonical app.log path. Kept module-level so the /admin/logs
+# route can read from the same file the handler writes to without re-deriving
+# the path.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+LOG_DIR = REPO_ROOT / "logs"
+APP_LOG_PATH = LOG_DIR / "app.log"
+
+# Rotation knobs: 10 MB per file, keep 5 rotated copies → ~50 MB ceiling on
+# disk for app.log. The systemd unit owns /var/www/compare-wages/logs as
+# www-data so rotation succeeds inside the hardened sandbox.
+_LOG_MAX_BYTES = 10 * 1024 * 1024
+_LOG_BACKUP_COUNT = 5
+
 
 def _configure_logging() -> None:
     """Install a global root-logger configuration so every module's
     ``logging.getLogger(__name__)`` call produces output in a consistent shape.
 
     Driven by the ``LOG_LEVEL`` environment variable (default ``INFO``).
-    Format: ``<asctime> <LEVEL> <logger.name> :: <message>``. ``force=True``
-    so we cleanly replace whatever ``basicConfig`` may have been called with
-    earlier in the process (uvicorn's reloader, pytest's capture, etc.).
+    Format: ``<asctime> <LEVEL> [<op_id>] <logger.name> :: <message>``. ``op_id``
+    is a one-dash placeholder for non-orchestrator lines (see
+    :mod:`app.log_context`); orchestrators stamp it via ``operation_context``.
+
+    Two handlers: stdout (journalctl pickup) + a rotating file at
+    ``logs/app.log`` (admin /admin/logs viewer + ``tail -f`` on the box). The
+    file handler is wrapped in try/except so tests or fresh checkouts where
+    ``logs/`` isn't writable still get stdout-only logging instead of an
+    import-time crash.
     """
     level = os.environ.get("LOG_LEVEL", "INFO").upper()
-    fmt = "%(asctime)s %(levelname)-5s %(name)s :: %(message)s"
-    logging.basicConfig(level=level, format=fmt, stream=sys.stdout, force=True)
+    fmt = "%(asctime)s %(levelname)-5s [%(op_id)s] %(name)s :: %(message)s"
+    formatter = logging.Formatter(fmt)
+    op_filter = OperationContextFilter()
+
+    # Force=True so we cleanly replace whatever ``basicConfig`` may have been
+    # called with earlier in the process (uvicorn's reloader, pytest's capture).
+    root = logging.getLogger()
+    for h in list(root.handlers):
+        root.removeHandler(h)
+    root.setLevel(level)
+
+    stdout_handler = logging.StreamHandler(stream=sys.stdout)
+    stdout_handler.setFormatter(formatter)
+    stdout_handler.addFilter(op_filter)
+    root.addHandler(stdout_handler)
+
+    # File handler — best-effort. If logs/ isn't writable (CI, sandboxed tests,
+    # a dev box without the dir mkdir'd), warn once and continue stdout-only.
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            APP_LOG_PATH,
+            maxBytes=_LOG_MAX_BYTES,
+            backupCount=_LOG_BACKUP_COUNT,
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(formatter)
+        file_handler.addFilter(op_filter)
+        root.addHandler(file_handler)
+    except OSError as e:
+        # Don't crash. Operators reading stdout will see this warning and the
+        # /admin/logs page will render the empty-state hint.
+        logging.getLogger(__name__).warning(
+            "could not open app.log for writing (%s); continuing stdout-only", e,
+        )
+
     # Tame chatty third-party loggers that would otherwise drown out our signal.
     for noisy in (
         "httpx",

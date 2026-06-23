@@ -15,9 +15,12 @@ Scrapers MUST:
 """
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
+
+log = logging.getLogger(__name__)
 from typing import Iterator
 
 

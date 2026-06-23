@@ -438,7 +438,8 @@ def test_walmart_blocked_falls_back_to_fixtures(
 def test_fixture_file_present_and_realistic() -> None:
     """The fixture file must exist and contain the markers the LLM extractor
     keys off of, plus a parseable JSON-LD block with full structured address."""
-    from app.scrapers.walmart import FIXTURE_DIR, FIXTURE_FILE, _parse_jobposting_jsonld
+    from app.scrapers.base_employer import parse_jobposting_jsonld
+    from app.scrapers.walmart import FIXTURE_DIR, FIXTURE_FILE
 
     path = FIXTURE_DIR / FIXTURE_FILE
     assert path.exists(), f"fixture HTML missing at {path}"
@@ -455,7 +456,7 @@ def test_fixture_file_present_and_realistic() -> None:
         .replace("{{STREET}}", "406 S Walton Blvd")
         .replace("{{ZIP}}", "72712")
     )
-    ld = _parse_jobposting_jsonld(rendered)
+    ld = parse_jobposting_jsonld(rendered)
     assert ld is not None, "JSON-LD JobPosting block must be parseable"
     addr = ld["jobLocation"]["address"]
     assert addr["addressLocality"] == "Bentonville"

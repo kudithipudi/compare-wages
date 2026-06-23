@@ -11,15 +11,14 @@ ranges elsewhere too).
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import httpx  # noqa: F401  -- imported so test patches at app.scrapers.starbucks.httpx land
 
-from app.scrapers.base_employer import (
-    BaseEmployerScraper,
-    USER_AGENT,  # noqa: F401  -- re-exported for tests that imported it from here
-    parse_jobposting_jsonld as _parse_jobposting_jsonld,  # noqa: F401  -- legacy shim
-)
+log = logging.getLogger(__name__)
+
+from app.scrapers.base_employer import BaseEmployerScraper
 from app.scrapers.registry import register
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"

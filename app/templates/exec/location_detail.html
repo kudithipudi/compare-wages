@@ -25,11 +25,11 @@
       </nav>
 
       <div class="flex items-center gap-3">
-        <div class="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-xs text-emerald-800">
-          <span class="fresh-dot"></span>
+        <div class="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs {{ last_observation_at | freshness_class }}">
+          <span class="{{ last_observation_at | freshness_dot_class }}"></span>
           <span class="font-semibold num">{{ total_observations }}</span>
-          <span class="text-emerald-700/80">live observations</span>
-          <span class="text-emerald-700/40">·</span>
+          <span class="opacity-80">wages from {{ total_postings }} postings</span>
+          <span class="opacity-40">·</span>
           <span>refreshed {{ last_observation_at | relative_time }}</span>
         </div>
       </div>
@@ -79,7 +79,18 @@
       </div>
 
       <div class="card p-5 sm:p-6">
-        <div class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">Wage gap · market &minus; ACME</div>
+        <div class="flex items-baseline justify-between">
+          <div class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">Wage gap · market &minus; ACME</div>
+          {% if yard_series and yard_series | length > 1 %}
+            {% set prev_gap = yard_series[-2].gap %}
+            {% set delta = summary.gap - prev_gap %}
+            <span class="text-[10px] num font-semibold
+              {% if delta > 0 %}gap-neg{% elif delta < 0 %}gap-pos{% else %}gap-flat{% endif %}"
+              title="vs previous snapshot">
+              {% if delta > 0 %}+{% elif delta < 0 %}−{% endif %}${{ '%.2f' | format(delta | abs) }} vs prev
+            </span>
+          {% endif %}
+        </div>
         <div class="flex items-baseline gap-3 mt-2">
           <span class="display-num text-5xl font-semibold
             {% if summary.gap > 0 %}gap-neg{% elif summary.gap < 0 %}gap-pos{% else %}gap-flat{% endif %}">
@@ -87,6 +98,27 @@
           </span>
           <span class="text-sm text-slate-500">/ hr</span>
         </div>
+        {% if yard_series and yard_series | length > 1 %}
+          <div class="mt-3">
+            <svg viewBox="0 0 100 28" preserveAspectRatio="none" class="w-full h-7">
+              {% set vals = yard_series | map(attribute='gap') | list %}
+              {% set mn = vals | min %}
+              {% set mx = vals | max %}
+              {% set rng = (mx - mn) if (mx - mn) > 0 else 1 %}
+              {% set n = vals | length %}
+              {% set step = (100.0 / (n - 1)) if n > 1 else 0 %}
+              {% set points = [] %}
+              {% for v in vals %}
+                {% set y = 26 - ((v - mn) / rng) * 22 %}
+                {% set _ = points.append((loop.index0 * step) ~ ',' ~ ('%.2f' | format(y))) %}
+              {% endfor %}
+              <polyline points="{{ points | join(' ') }}" fill="none"
+                stroke="{% if summary.gap > 0 %}var(--accent){% else %}#047857{% endif %}"
+                stroke-width="1.5" />
+            </svg>
+            <div class="text-[10px] text-slate-400 mt-0.5 num">{{ yard_series | length }} snapshots</div>
+          </div>
+        {% endif %}
         <div class="flex items-center gap-2 mt-3 flex-wrap">
           {% if summary.gap > 0 %}
             <span class="pill pill-rose">▲ Competitors pay more</span>
@@ -228,8 +260,6 @@
                     <td class="px-3 py-3 text-right num text-slate-600">{{ '%.1f' | format(o.distance_miles) }} mi</td>
                     <td class="px-3 py-3">
                       {% if o.source_tier == 'employer_owned' %}<span class="pill pill-emerald">Employer site</span>
-                      {% elif o.source_tier == 'aggregator' %}<span class="pill pill-sky">Aggregator</span>
-                      {% elif o.source_tier == 'press' %}<span class="pill pill-amber">Press</span>
                       {% else %}<span class="pill pill-slate">Sample</span>{% endif %}
                     </td>
                     <td class="px-3 py-3 min-w-[120px]">

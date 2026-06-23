@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -8,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
+
+log = logging.getLogger(__name__)
 from app.models import (
     Competitor,
     CbsaName,
@@ -73,7 +76,12 @@ def login_submit(
     if verify_credentials(username, password):
         request.session["authed"] = True
         request.session["user"] = username
+        log.info("admin login ok user=%s from=%s", username, request.client.host if request.client else "?")
         return _redirect(_safe_next(next))
+    log.warning(
+        "admin login failed user=%s from=%s configured=%s",
+        username, request.client.host if request.client else "?", credentials_configured(),
+    )
     error = (
         "Admin auth not configured — set ADMIN_USERNAME and ADMIN_PASSWORD in .env."
         if not credentials_configured() else "Invalid credentials."
@@ -305,6 +313,7 @@ def run_role_discovery(
     cid: Optional[int] = None
     if competitor_id.strip().isdigit():
         cid = int(competitor_id)
+    log.info("triggered role-discovery (db) competitor_id=%s", cid)
     stats = discover_from_existing_postings(s, competitor_id=cid)
     n = stats["new_suggestions"] + stats["refreshed_suggestions"]
     return _redirect(f"/admin/role-discovery?ran={n}")
@@ -322,6 +331,7 @@ def run_role_discovery_web(
     cid: Optional[int] = None
     if competitor_id.strip().isdigit():
         cid = int(competitor_id)
+    log.info("triggered role-discovery (web) competitor_id=%s", cid)
     stats = discover_from_web_search(s, competitor_id=cid)
     n = stats["new_suggestions"] + stats["refreshed_suggestions"]
     return _redirect(f"/admin/role-discovery?ran_web={n}")
@@ -406,6 +416,7 @@ def bulk_accept_role_discovery(
 
 @router.post("/run-now")
 def trigger_run():
+    log.info("triggered ingestion (all active yards)")
     run_id = run_ingestion(triggered_by="manual", async_mode=True)
     return _redirect(f"/admin/runs/{run_id}")
 
@@ -415,6 +426,7 @@ def trigger_run_for_yard(code: str, s: Session = Depends(get_db)):
     yard = s.execute(select(CopartLocation).where(CopartLocation.code == code)).scalar_one_or_none()
     if not yard:
         raise HTTPException(404)
+    log.info("triggered ingestion yard=%s id=%s", code, yard.id)
     run_id = run_ingestion(triggered_by="manual", yard_ids=[yard.id], async_mode=True)
     return _redirect(f"/admin/runs/{run_id}")
 
@@ -431,6 +443,7 @@ def trigger_run_for_yards(
             select(CopartLocation.id).where(CopartLocation.code.in_(yard_codes))
         ).scalars()
     )
+    log.info("triggered ingestion yards=%s (%d ids)", yard_codes, len(ids))
     run_id = run_ingestion(triggered_by="manual", yard_ids=ids, async_mode=True)
     return _redirect(f"/admin/runs/{run_id}")
 
@@ -459,6 +472,7 @@ def trigger_scrape(competitor_id: int, s: Session = Depends(get_db)):
     competitor = s.get(Competitor, competitor_id)
     if not competitor:
         raise HTTPException(404)
+    log.info("triggered scrape competitor=%s id=%d", competitor.name, competitor_id)
     run_id = run_scrape(competitor_id=competitor_id, triggered_by="manual", async_mode=True)
     return _redirect(f"/admin/scrape-runs/{run_id}")
 
@@ -576,7 +590,7 @@ def ai_op_detail(id: int, request: Request, s: Session = Depends(get_db)):
 # ----- Per-purpose LLM model config -----
 
 SUGGESTED_MODELS = [
-    "anthropic/claude-3.5-haiku",
+    "anthropic/claude-haiku-4.5",
     "anthropic/claude-3.5-sonnet",
     "anthropic/claude-3-opus",
     "openai/gpt-4o-mini",
@@ -665,4 +679,107 @@ def eval_view(request: Request):
     results, summary = run_extraction_evals()
     return templates.TemplateResponse(
         request, "admin/eval.html", {"results": results, "summary": summary},
+    )
+
+
+# ----- Logs viewer -----
+
+# Format string: "<asctime> <LEVEL> [<op_id>] <logger> :: <message>"
+# Parser regex matches everything but is tolerant of malformed lines (writes them as raw).
+import re as _re  # noqa: E402  -- local rename so tests don't shadow stdlib re
+from collections import deque as _deque  # noqa: E402
+
+_LOG_LINE_RE = _re.compile(
+    r"^(?P<ts>\S+ \S+)\s+(?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+"
+    r"\[(?P<op_id>[^\]]*)\]\s+(?P<logger>\S+)\s+::\s+(?P<message>.*)$"
+)
+
+
+def _read_log_tail(path, n: int):
+    """Return up to n last lines from path as a list. Empty list if file is missing."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return list(_deque(f, maxlen=n))
+    except FileNotFoundError:
+        return []
+    except OSError as e:
+        log.warning("could not read log file %s: %s", path, e)
+        return []
+
+
+@router.get("/logs", response_class=HTMLResponse)
+def logs_view(
+    request: Request,
+    level: str = "",
+    module: str = "",
+    op_id: str = "",
+    tail: int = 500,
+):
+    """Live tail of logs/app.log with module/level/op_id filters.
+
+    No auto-refresh. Bounded by tail (default 500, max 2000) so a runaway log
+    can't OOM the page renderer.
+    """
+    from app.main import APP_LOG_PATH
+
+    tail = max(1, min(int(tail or 500), 2000))
+    raw_lines = _read_log_tail(APP_LOG_PATH, tail)
+    rows: list[dict] = []
+    for line in raw_lines:
+        line = line.rstrip("\n")
+        m = _LOG_LINE_RE.match(line)
+        if not m:
+            rows.append({"raw": line, "level": "", "ts": "", "op_id": "", "logger": "", "message": line})
+            continue
+        rows.append({
+            "raw": line,
+            "ts": m.group("ts"),
+            "level": m.group("level"),
+            "op_id": m.group("op_id"),
+            "logger": m.group("logger"),
+            "message": m.group("message"),
+        })
+
+    # Apply filters in Python after reading the tail. Filtering up front would
+    # mean reading the entire file for the rare-level case, defeating the tail.
+    level_f = level.strip().upper()
+    if level_f:
+        rows = [r for r in rows if r.get("level") == level_f]
+    if module.strip():
+        m_low = module.strip().lower()
+        rows = [r for r in rows if m_low in r.get("logger", "").lower()]
+    if op_id.strip():
+        o_low = op_id.strip().lower()
+        rows = [r for r in rows if o_low in r.get("op_id", "").lower()]
+
+    # Reverse so newest is on top — feed-like reading.
+    rows.reverse()
+
+    return templates.TemplateResponse(
+        request,
+        "admin/logs.html",
+        {
+            "rows": rows,
+            "log_path": str(APP_LOG_PATH),
+            "log_exists": APP_LOG_PATH.exists(),
+            "filter_level": level_f,
+            "filter_module": module,
+            "filter_op_id": op_id,
+            "tail": tail,
+            "levels": ["DEBUG", "INFO", "WARNING", "ERROR"],
+        },
+    )
+
+
+@router.get("/logs/download")
+def logs_download():
+    """Stream the raw log file as an attachment."""
+    from fastapi.responses import FileResponse
+    from app.main import APP_LOG_PATH
+    if not APP_LOG_PATH.exists():
+        raise HTTPException(404, "no log file yet")
+    return FileResponse(
+        path=str(APP_LOG_PATH),
+        media_type="text/plain",
+        filename="app.log",
     )

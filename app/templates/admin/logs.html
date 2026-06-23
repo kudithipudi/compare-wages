@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% from "admin/_shell.html" import admin_shell, page_header, empty_state %}
+{% block title %}Logs · Admin{% endblock %}
+{% block body %}
+{% call admin_shell("logs") %}
+
+  {% call page_header("Logs", "Live tail of logs/app.log. Use the op_id filter to follow one orchestrator run end-to-end.") %}
+    <a href="{{ prefix }}/admin/logs/download" class="btn btn-ghost btn-sm">Download raw</a>
+    <a href="{{ prefix }}/admin/logs?level={{ filter_level }}&module={{ filter_module }}&op_id={{ filter_op_id }}&tail={{ tail }}" class="btn btn-primary btn-sm">Refresh</a>
+  {% endcall %}
+
+  {# ─── Filters ─── #}
+  <form method="get" action="{{ prefix }}/admin/logs" class="card p-4 sm:p-5 space-y-3">
+    {# Level chips — anchor-style so they round-trip through URL state. #}
+    <div class="flex items-center gap-1.5 flex-wrap">
+      <span class="text-[10px] uppercase tracking-wider font-semibold text-slate-500 mr-2">Level</span>
+      <a href="?level=&module={{ filter_module }}&op_id={{ filter_op_id }}&tail={{ tail }}"
+         class="chip {% if not filter_level %}chip-active{% endif %}">All</a>
+      {% for lvl in levels %}
+      <a href="?level={{ lvl }}&module={{ filter_module }}&op_id={{ filter_op_id }}&tail={{ tail }}"
+         class="chip {% if filter_level == lvl %}chip-active{% endif %}">{{ lvl }}</a>
+      {% endfor %}
+    </div>
+
+    <div class="grid gap-3 sm:grid-cols-[1fr_1fr_auto_auto]">
+      <label class="field">
+        <span class="field-label">Module (substring)</span>
+        <input name="module" value="{{ filter_module }}" class="field-input font-mono" placeholder="e.g. app.services.ingestion" />
+      </label>
+      <label class="field">
+        <span class="field-label">Op id (substring)</span>
+        <input name="op_id" value="{{ filter_op_id }}" class="field-input font-mono" placeholder="e.g. discover_db or discover_db/3a9f" />
+      </label>
+      <label class="field">
+        <span class="field-label">Tail</span>
+        <input name="tail" value="{{ tail }}" type="number" min="1" max="2000" class="field-input num w-24" />
+      </label>
+      <div class="flex items-end">
+        <button type="submit" class="btn btn-primary">Apply</button>
+      </div>
+      <input type="hidden" name="level" value="{{ filter_level }}" />
+    </div>
+  </form>
+
+  {# ─── Log rows ─── #}
+  {% if not log_exists %}
+    {{ empty_state("Log file not created yet.", "It appears on first write. Trigger any orchestrator (e.g. Run Now) to seed it.") }}
+  {% elif rows %}
+    <div class="text-xs text-slate-500 flex items-center justify-between">
+      <span>Showing <span class="num font-semibold text-slate-700">{{ rows | length }}</span> of last <span class="num">{{ tail }}</span> lines from <code class="num">{{ log_path }}</code></span>
+      <span class="text-slate-400">Newest first</span>
+    </div>
+    <div class="card divide-y divide-slate-100 overflow-hidden font-mono text-xs">
+      {% for r in rows %}
+      <div class="flex items-stretch gap-0 hover:bg-slate-50 transition">
+        <span class="w-1 shrink-0
+          {% if r.level == 'ERROR' or r.level == 'CRITICAL' %}bg-rose-500
+          {% elif r.level == 'WARNING' %}bg-amber-500
+          {% elif r.level == 'INFO' %}bg-sky-500
+          {% elif r.level == 'DEBUG' %}bg-slate-300
+          {% else %}bg-slate-200{% endif %}"></span>
+        <div class="flex-1 min-w-0 px-3 py-2 grid grid-cols-[auto_auto_auto_1fr] gap-x-3 gap-y-0.5 items-baseline" title="{{ r.raw }}">
+          <span class="text-slate-400 num whitespace-nowrap">{{ r.ts }}</span>
+          {% if r.level %}
+            <span class="pill
+              {% if r.level == 'ERROR' or r.level == 'CRITICAL' %}pill-rose
+              {% elif r.level == 'WARNING' %}pill-amber
+              {% elif r.level == 'INFO' %}pill-sky
+              {% else %}pill-slate{% endif %}">{{ r.level }}</span>
+          {% else %}
+            <span></span>
+          {% endif %}
+          {% if r.op_id and r.op_id != '-' %}
+            <a href="?op_id={{ r.op_id }}&level={{ filter_level }}&module={{ filter_module }}&tail={{ tail }}"
+               class="pill pill-emerald hover:opacity-80" title="Filter by this op id">{{ r.op_id }}</a>
+          {% else %}
+            <span class="text-slate-300">—</span>
+          {% endif %}
+          <span class="min-w-0 truncate">
+            <span class="text-slate-500">{{ r.logger }}</span>
+            <span class="text-slate-300 mx-1">::</span>
+            <span class="text-slate-800">{{ r.message }}</span>
+          </span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    {{ empty_state("No log lines match the filter.", "Clear the filter or widen the tail to see more.") }}
+  {% endif %}
+
+{% endcall %}
+{% endblock %}

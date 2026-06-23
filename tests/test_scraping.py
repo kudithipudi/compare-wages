@@ -116,7 +116,7 @@ class _FakeScraper(Scraper):
         )
 
 
-def test_run_scrape_happy_path_writes_postings_and_locations(seeded_session):
+def test_run_scrape_happy_path_writes_postings_and_locations(seeded_session, monkeypatch):
     """Registered scraper → ScraperRun success, JobPostings created, CL matched/created."""
     name = "FakeCo"
     competitor_id = _make_competitor(name)
@@ -127,6 +127,18 @@ def test_run_scrape_happy_path_writes_postings_and_locations(seeded_session):
             competitor_id=competitor_id, copart_role="Yard Attendant",
             competitor_role="Warehouse Associate", bucket="outdoor", confidence=0.9,
         ))
+    # Stub the geocoder so the test stays offline and gets real (non-zero) coords.
+    # Without this stub the city-only "Houston, TX" lookup hits the live Census
+    # Geocoder, gets no match, and the CL persists with (0,0) — which the catchment
+    # filter (correctly) treats as out-of-catchment, dropping the postings before save.
+    monkeypatch.setattr(
+        # Both cities resolve to LA-adjacent coords so they fall inside CA-LAX's catchment
+        # regardless of which Copart yards are active at test time (test ordering can leave
+        # only CA-LAX active by the time this runs). This test isn't about geography —
+        # it's about the orchestration loop saving every posting it accepts.
+        "app.services.scraping.geocode",
+        lambda **kw: (34.05, -118.24) if kw.get("city") == "Los Angeles" else (34.06, -118.25),
+    )
     try:
         run_id = run_scrape(competitor_id=competitor_id, triggered_by="test", async_mode=False)
 
@@ -194,6 +206,18 @@ def test_no_wage_vs_transport_failure_distinction(seeded_session, monkeypatch):
             competitor_id=competitor_id, copart_role="Yard Attendant",
             competitor_role="Warehouse Associate", bucket="outdoor", confidence=0.9,
         ))
+    # Stub the geocoder so each FakeScraper city resolves to non-zero coords. Without
+    # this the live Census Geocoder gets called for "Houston, TX" with no street and
+    # returns no match → CL persists at (0,0) → the catchment filter (correctly)
+    # drops the posting before save, breaking this test's "3 saved" precondition.
+    monkeypatch.setattr(
+        # Both cities resolve to LA-adjacent coords so they fall inside CA-LAX's catchment
+        # regardless of which Copart yards are active at test time (test ordering can leave
+        # only CA-LAX active by the time this runs). This test isn't about geography —
+        # it's about the orchestration loop saving every posting it accepts.
+        "app.services.scraping.geocode",
+        lambda **kw: (34.05, -118.24) if kw.get("city") == "Los Angeles" else (34.06, -118.25),
+    )
 
     # Patch extract_wage to return three different outcomes deterministically by
     # cycling through them in order, so over the three FakeScraper postings we get
@@ -348,8 +372,12 @@ def test_scraped_locations_get_real_coords_not_zero_zero(seeded_session, monkeyp
 
     # Stub the geocoder to a known coord pair (LA-ish) so the test stays offline.
     monkeypatch.setattr(
+        # Both cities resolve to LA-adjacent coords so they fall inside CA-LAX's catchment
+        # regardless of which Copart yards are active at test time (test ordering can leave
+        # only CA-LAX active by the time this runs). This test isn't about geography —
+        # it's about the orchestration loop saving every posting it accepts.
         "app.services.scraping.geocode",
-        lambda **kw: (34.05, -118.24) if kw.get("city") == "Los Angeles" else (29.76, -95.37),
+        lambda **kw: (34.05, -118.24) if kw.get("city") == "Los Angeles" else (34.06, -118.25),
     )
 
     try:

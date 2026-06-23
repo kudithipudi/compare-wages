@@ -1,9 +1,13 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+
+log = logging.getLogger(__name__)
 from app.models import CbsaName, CopartLocation, Narrative
 from app.services import bls
 from app.services.market import (
@@ -11,8 +15,11 @@ from app.services.market import (
     competitor_benchmarks,
     last_observation_at,
     national_facts,
+    national_gap_series,
+    snapshot_series_for_yard,
     state_rollup,
     total_live_observations,
+    total_live_postings,
     yard_summary,
 )
 from app.templating import templates
@@ -58,6 +65,7 @@ def overview(request: Request, bucket: str | None = None, s: Session = Depends(g
     narrative = _latest_narrative(s, "national", "US")
     benchmarks = competitor_benchmarks(s, bucket=bucket)
     last_at = last_observation_at(s)
+    gap_series = national_gap_series(s, limit=12)
     return templates.TemplateResponse(
         request,
         "exec/overview.html",
@@ -71,6 +79,8 @@ def overview(request: Request, bucket: str | None = None, s: Session = Depends(g
             "benchmarks": benchmarks,
             "last_observation_at": last_at,
             "total_observations": sum(b["obs_count"] for b in benchmarks),
+            "total_postings": total_live_postings(s),
+            "gap_series": gap_series,
         },
     )
 
@@ -89,6 +99,7 @@ def location_detail(code: str, request: Request, bucket: str | None = None, s: S
     if yard.cbsa_code:
         row = s.get(CbsaName, yard.cbsa_code)
         cbsa_title = row.cbsa_title if row else ""
+    yard_series = snapshot_series_for_yard(s, yard.id, limit=12)
     return templates.TemplateResponse(
         request,
         "exec/location_detail.html",
@@ -102,6 +113,8 @@ def location_detail(code: str, request: Request, bucket: str | None = None, s: S
             "cbsa_title": cbsa_title,
             "last_observation_at": last_observation_at(s),
             "total_observations": total_live_observations(s),
+            "total_postings": total_live_postings(s),
+            "yard_series": yard_series,
         },
     )
 
@@ -114,5 +127,6 @@ def methodology(request: Request, s: Session = Depends(get_db)):
         {
             "last_observation_at": last_observation_at(s),
             "total_observations": total_live_observations(s),
+            "total_postings": total_live_postings(s),
         },
     )

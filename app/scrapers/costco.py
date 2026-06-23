@@ -15,16 +15,14 @@ class's ``link_href_blocklist_re`` handles that.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import httpx  # noqa: F401  -- imported so test patches at app.scrapers.costco.httpx land
 
-from app.scrapers.base_employer import (
-    BaseEmployerScraper,
-    USER_AGENT,  # noqa: F401
-    US_STATE_ABBR,  # noqa: F401  -- legacy re-export for tests
-    parse_jobposting_jsonld as _parse_jobposting_jsonld,  # noqa: F401
-)
+log = logging.getLogger(__name__)
+
+from app.scrapers.base_employer import BaseEmployerScraper
 from app.scrapers.registry import register
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"

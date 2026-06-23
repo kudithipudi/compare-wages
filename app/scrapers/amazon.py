@@ -27,6 +27,7 @@ each subdomain produced under
 """
 from __future__ import annotations
 
+import logging
 import re
 import time
 from pathlib import Path
@@ -37,11 +38,12 @@ import httpx  # noqa: F401  -- imported so test patches at app.scrapers.amazon.h
 from app.scrapers.base import ScrapedPosting
 from app.scrapers.base_employer import (
     BaseEmployerScraper,
-    USER_AGENT,  # noqa: F401  -- legacy re-export
     US_STATE_ABBR,
-    parse_jobposting_jsonld as _parse_jobposting_jsonld,  # noqa: F401  -- legacy re-export
+    parse_jobposting_jsonld,
 )
 from app.scrapers.registry import register
+
+log = logging.getLogger(__name__)
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 FIXTURE_FILE = "amazon_warehouse_sample.html"
@@ -275,8 +277,8 @@ class AmazonScraper(BaseEmployerScraper):
           hiring.amazon.com pages ship ``schema.org/JobPosting`` JSON-LD.
 
         Resilience features (retry, per-keyword failure budget, telemetry
-        notes) are reused via ``_load_detail_with_retry`` and
-        ``_walk_details_concurrent``.
+        notes) are reused via ``_walk_details_sequential`` /
+        ``_load_detail_with_retry``.
         """
         if max_postings <= 0:
             return
@@ -376,14 +378,9 @@ class AmazonScraper(BaseEmployerScraper):
                 original_absolutize = self._absolutize
                 self._absolutize = self._absolutize_hiring  # type: ignore[method-assign]
                 try:
-                    if self.detail_concurrency <= 1:
-                        yield from self._walk_details_sequential(
-                            page, all_links[:max_postings], pause, PlaywrightTimeoutError
-                        )
-                    else:
-                        yield from self._walk_details_concurrent(
-                            context, all_links[:max_postings], pause, PlaywrightTimeoutError
-                        )
+                    yield from self._walk_details_sequential(
+                        page, all_links[:max_postings], pause, PlaywrightTimeoutError
+                    )
                 finally:
                     self._absolutize = original_absolutize  # type: ignore[method-assign]
             finally:
@@ -444,7 +441,7 @@ class AmazonScraper(BaseEmployerScraper):
         if "hiring.amazon.com" in (source_url or ""):
             return super()._extract_posting(page, html, source_url)
 
-        ld = _parse_jobposting_jsonld(html)
+        ld = parse_jobposting_jsonld(html)
         title = ""
         city = state = street = zip_code = ""
         if ld:

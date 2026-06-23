@@ -22,6 +22,7 @@ from typing import Optional
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.log_context import operation_context
 from app.models import (
     Competitor,
     JobPosting,
@@ -191,23 +192,38 @@ def discover_from_existing_postings(
     - ``new_suggestions``    — fresh rows inserted
     - ``refreshed_suggestions`` — pending rows whose classification was updated
     - ``skipped_existing``   — titles whose suggestion is already accepted/rejected
+
+    Wrapped in :func:`operation_context` so every log line emitted here, in
+    ``_process_competitor``, and in the batched LLM calls shares one op_id
+    a /admin/logs viewer can follow end-to-end.
     """
-    stats = {
-        "processed_titles": 0,
-        "new_suggestions": 0,
-        "refreshed_suggestions": 0,
-        "skipped_existing": 0,
-    }
-    if competitor_id is not None:
-        competitor = s.get(Competitor, competitor_id)
-        if competitor is None:
-            return stats
-        _process_competitor(s, competitor, stats)
-    else:
-        competitors = list(s.execute(select(Competitor).order_by(Competitor.name)).scalars())
-        for c in competitors:
-            _process_competitor(s, c, stats)
-    return stats
+    with operation_context("discover_db"):
+        stats = {
+            "processed_titles": 0,
+            "new_suggestions": 0,
+            "refreshed_suggestions": 0,
+            "skipped_existing": 0,
+        }
+        if competitor_id is not None:
+            log.info(
+                "discover_from_existing_postings starting (competitor_id=%s)",
+                competitor_id,
+            )
+            competitor = s.get(Competitor, competitor_id)
+            if competitor is None:
+                log.warning(
+                    "discover_from_existing_postings: competitor id=%s not found",
+                    competitor_id,
+                )
+                return stats
+            _process_competitor(s, competitor, stats)
+        else:
+            log.info("discover_from_existing_postings starting (all competitors)")
+            competitors = list(s.execute(select(Competitor).order_by(Competitor.name)).scalars())
+            for c in competitors:
+                _process_competitor(s, c, stats)
+        log.info("discover_from_existing_postings complete stats=%r", stats)
+        return stats
 
 
 # ------------------------- V2: web search discovery -------------------------
@@ -400,25 +416,36 @@ def discover_from_web_search(
     - ``refreshed_suggestions``  — pending rows updated (V1 or V2)
     - ``skipped_existing``       — candidate titles already accepted/rejected
     """
-    stats = {
-        "processed_competitors": 0,
-        "queries_issued": 0,
-        "candidates_extracted": 0,
-        "new_suggestions": 0,
-        "refreshed_suggestions": 0,
-        "skipped_existing": 0,
-    }
-    if competitor_id is not None:
-        competitor = s.get(Competitor, competitor_id)
-        if competitor is None:
-            return stats
-        stats["processed_competitors"] += 1
-        _process_competitor_web(s, competitor, stats)
-    else:
-        competitors = list(
-            s.execute(select(Competitor).order_by(Competitor.name)).scalars()
-        )
-        for c in competitors:
+    with operation_context("discover_web"):
+        stats = {
+            "processed_competitors": 0,
+            "queries_issued": 0,
+            "candidates_extracted": 0,
+            "new_suggestions": 0,
+            "refreshed_suggestions": 0,
+            "skipped_existing": 0,
+        }
+        if competitor_id is not None:
+            log.info(
+                "discover_from_web_search starting (competitor_id=%s)",
+                competitor_id,
+            )
+            competitor = s.get(Competitor, competitor_id)
+            if competitor is None:
+                log.warning(
+                    "discover_from_web_search: competitor id=%s not found",
+                    competitor_id,
+                )
+                return stats
             stats["processed_competitors"] += 1
-            _process_competitor_web(s, c, stats)
-    return stats
+            _process_competitor_web(s, competitor, stats)
+        else:
+            log.info("discover_from_web_search starting (all competitors)")
+            competitors = list(
+                s.execute(select(Competitor).order_by(Competitor.name)).scalars()
+            )
+            for c in competitors:
+                stats["processed_competitors"] += 1
+                _process_competitor_web(s, c, stats)
+        log.info("discover_from_web_search complete stats=%r", stats)
+        return stats

@@ -15,6 +15,7 @@ surfaces (scraping vs extraction) stay independent on the admin UI.
 """
 from __future__ import annotations
 
+import logging
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -22,11 +23,14 @@ from pathlib import Path
 from sqlalchemy import func, or_, select
 
 from app.db import session_scope
+from app.log_context import operation_context
 from app.models import Competitor, CompetitorLocation, CopartLocation, JobPosting, RoleMapping, ScraperRun
 from app.scrapers.base import ScrapedPosting
 from app.scrapers.registry import get_scraper
 from app.services.geocoding import geocode
 from app.services.ingestion import extract_postings_by_ids
+
+log = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 RAW_HTML_DIR = REPO_ROOT / "data" / "raw_html"
@@ -186,11 +190,22 @@ def keywords_for_competitor(
 
 
 def _do_scrape(run_id: int, competitor_id: int, max_postings: int) -> None:
-    """Body of a scrape run. Synchronous; called both inline and in a daemon thread."""
+    """Body of a scrape run. Synchronous; called both inline and in a daemon thread.
+
+    Wrapped in :func:`operation_context` so every log line emitted here, by the
+    scraper instance, and by the inline ``extract_postings_by_ids`` extraction
+    pass shares one ``op_id`` an operator can grep for on /admin/logs.
+    """
+    with operation_context("scrape"):
+        _do_scrape_inner(run_id, competitor_id, max_postings)
+
+
+def _do_scrape_inner(run_id: int, competitor_id: int, max_postings: int) -> None:
     # Resolve competitor + scraper inside the worker so the thread is self-contained.
     with session_scope() as s:
         competitor = s.get(Competitor, competitor_id)
         if competitor is None:
+            log.warning("run_scrape: competitor id=%s not found", competitor_id)
             run = s.get(ScraperRun, run_id)
             if run is not None:
                 run.status = "failed"
@@ -198,6 +213,10 @@ def _do_scrape(run_id: int, competitor_id: int, max_postings: int) -> None:
                 run.notes = (run.notes or "") + " | competitor not found"
             return
         competitor_name = competitor.name
+        log.info(
+            "run_scrape starting (competitor=%s, max_postings=%d)",
+            competitor_name, max_postings,
+        )
         keywords = keywords_for_competitor(s, competitor_id)
         # Active-yard locations are passed through to the scraper so each search query
         # targets a real yard's catchment. Empty list = no active yards = fall back to
@@ -221,6 +240,7 @@ def _do_scrape(run_id: int, competitor_id: int, max_postings: int) -> None:
     scraper = get_scraper(competitor_name)
     if scraper is None:
         # Belt-and-braces: run_scrape should have caught this, but guard the worker too.
+        log.warning("run_scrape: no scraper registered for %s", competitor_name)
         with session_scope() as s:
             run = s.get(ScraperRun, run_id)
             if run is not None:
@@ -230,6 +250,9 @@ def _do_scrape(run_id: int, competitor_id: int, max_postings: int) -> None:
         return
 
     if not keywords:
+        log.warning(
+            "run_scrape: no role mappings for %s — nothing to search for", competitor_name,
+        )
         with session_scope() as s:
             run = s.get(ScraperRun, run_id)
             if run is not None:
@@ -249,19 +272,26 @@ def _do_scrape(run_id: int, competitor_id: int, max_postings: int) -> None:
 
     out_of_catchment = 0
 
-    def _in_catchment(lat: float, lng: float) -> bool:
+    def _in_catchment(lat: float, lng: float, *, posting_id: object = None) -> bool:
         """Truthy if the posting is within DISTANCE_CUTOFF_MILES of any active yard.
 
         When there are no active yards we keep everything — gives operators a way to
         see what scrapers can return before they activate yards (better than empty).
-        Postings with (0, 0) coordinates (geocoder failed) are kept; the dashboard's
-        own geo filter will exclude them visually but we still persist so a future
-        backfill can re-geocode.
+
+        Postings with (0, 0) coordinates are treated as OUT-of-catchment. The Census
+        Geocoder returns (0, 0) as a sentinel on lookup failure, and Haversine from any
+        yard to (0, 0) is a finite number that frequently falls inside the cutoff for
+        yards on the equator-adjacent western hemisphere — so the old "keep (0,0)"
+        behavior silently nationalized every posting during a geocoder outage.
         """
         if not active_yard_coords:
             return True
         if lat == 0.0 and lng == 0.0:
-            return True
+            log.warning(
+                "geocoded coords are (0,0) — skipping posting (likely geocoder fallback): id=%s",
+                posting_id,
+            )
+            return False
         for y_lat, y_lng in active_yard_coords:
             if haversine_miles(y_lat, y_lng, lat, lng) <= catchment_miles:
                 return True
@@ -295,7 +325,11 @@ def _do_scrape(run_id: int, competitor_id: int, max_postings: int) -> None:
                     # post-fetch geographic filter. If the posting's location is more than
                     # `catchment_miles` from every active yard, skip persisting it.
                     cl_for_filter = s.get(CompetitorLocation, cl_id)
-                    if cl_for_filter is not None and not _in_catchment(cl_for_filter.lat, cl_for_filter.lng):
+                    if cl_for_filter is not None and not _in_catchment(
+                        cl_for_filter.lat,
+                        cl_for_filter.lng,
+                        posting_id=posting.source_url or posting.raw_title,
+                    ):
                         out_of_catchment += 1
                         continue
 
@@ -327,6 +361,15 @@ def _do_scrape(run_id: int, competitor_id: int, max_postings: int) -> None:
             if candidates % PROGRESS_FLUSH_EVERY == 0:
                 _flush_progress(run_id, candidates=candidates, saved=saved)
 
+        # The geographic-filter result is the most operationally interesting outcome
+        # of the scrape loop — high out-of-catchment counts mean the upstream site
+        # ranking is too global for the active yards. Emit it before the extract
+        # pass so it's visible even when extraction itself fails.
+        log.info(
+            "geographic filter: %d in-catchment, %d out-of-catchment",
+            saved, out_of_catchment,
+        )
+
         # Immediately extract wages on the postings we just scraped, so the operator
         # sees them on the dashboard without having to click Run Now afterward. This
         # ignores yard/active filters — if you bothered to scrape it, you want wages.
@@ -343,6 +386,21 @@ def _do_scrape(run_id: int, competitor_id: int, max_postings: int) -> None:
         fallback = " · fixture-fallback" if tel.get("fallback_to_fixtures") else ""
         first_reason = (tel.get("reasons") or [None])[0]
         reason_tail = f" · why: {first_reason}" if (fallback and first_reason) else ""
+
+        # Per-keyword telemetry from BaseEmployerScraper. Operators following
+        # /admin/logs see exactly which queries returned what — invaluable for
+        # debugging "why did Costco return zero for the freight keyword".
+        per_kw = tel.get("per_keyword") or {}
+        for kw, stats in per_kw.items():
+            log.info("scrape keyword=%r telemetry=%r", kw, stats)
+
+        log.info(
+            "run_scrape complete (competitor=%s, candidates=%d, saved=%d, "
+            "extracted=ok=%d/no_wage=%d/failed=%d)",
+            competitor_name, candidates, saved,
+            extract_summary["success"], extract_summary["no_wage_found"],
+            extract_summary["transport_failed"],
+        )
 
         with session_scope() as s:
             run = s.get(ScraperRun, run_id)
@@ -366,6 +424,7 @@ def _do_scrape(run_id: int, competitor_id: int, max_postings: int) -> None:
                     + f"keywords=[{kw_summary}]{fallback}{reason_tail}"
                 )
     except Exception as exc:
+        log.exception("run_scrape failed (competitor=%s): %s", competitor_name, exc)
         with session_scope() as s:
             run = s.get(ScraperRun, run_id)
             if run is not None:

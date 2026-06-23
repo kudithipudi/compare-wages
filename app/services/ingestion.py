@@ -13,23 +13,35 @@ The thread commits progress (`postings_collected`, `extraction_success`,
 """
 from __future__ import annotations
 
+import logging
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from sqlalchemy import select
 
 from app.config import get_settings
 from app.db import session_scope
+from app.log_context import operation_context
 from app.models import CompetitorLocation, CopartLocation, JobPosting, Narrative, ScrapeRun
 from app.services import llm
 from app.services.geo import haversine_miles
-from app.services.market import national_facts
+from app.services.market import national_facts, write_wage_snapshots
+
+log = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # How often the background thread commits progress to the ScrapeRun row.
 PROGRESS_FLUSH_EVERY = 3
+
+# How often (in postings) we emit an INFO progress log. Distinct from the DB
+# flush cadence above — log lines are cheap, DB writes aren't, so we log more
+# often than we commit. 25 keeps a typical 200-posting run at ~8 progress
+# lines, which is enough to follow on /admin/logs without flooding it.
+LOG_PROGRESS_EVERY = 25
 
 
 def _load_html(posting: JobPosting) -> str:
@@ -87,8 +99,62 @@ def _create_run(triggered_by: str, scope_codes: str, *, status: str = "running",
         return run.id
 
 
+ExtractOutcome = Literal["success", "no_wage", "transport"]
+
+
+def _extract_one(s, posting_id: int) -> ExtractOutcome:
+    """Extract wage + classify role for one posting. Returns the outcome bucket.
+
+    Outcomes (deliberately three — counters keep the same four-bucket shape because
+    ``processed`` is just the call count):
+
+    * ``"success"``    — LLM parsed cleanly AND returned a usable wage_low; row mutated
+                         with wage_low/high/unit/confidence and (best-effort) classification.
+    * ``"no_wage"``    — LLM parsed cleanly but the page disclosed no wage. Honest miss
+                         (Home Depot outside mandated states is the canonical example).
+    * ``"transport"``  — Posting row missing, raw HTML on disk missing, LLM call raised,
+                         OR the model's response failed schema validation. All of these
+                         are infrastructure-class problems, not honest no-wage outcomes.
+
+    The classification call is best-effort: if it fails, we still return ``"success"``.
+    The DB row is mutated through the caller's session — no commit here; ``session_scope``
+    in the caller is responsible for that.
+    """
+    p = s.get(JobPosting, posting_id)
+    if p is None:
+        return "transport"
+    html = _load_html(p)
+    if not html:
+        return "transport"
+    try:
+        extr = llm.extract_wage(html, p.raw_title, related_posting_id=p.id)
+    except Exception:
+        return "transport"
+    if not extr.validation_ok:
+        return "transport"
+    wage_low_val = extr.parsed.get("wage_low")
+    if not wage_low_val:
+        return "no_wage"
+
+    p.wage_low = float(wage_low_val)
+    p.wage_high = float(extr.parsed.get("wage_high", wage_low_val))
+    p.wage_unit = extr.parsed.get("wage_unit") or "hourly"
+    p.extraction_confidence = float(extr.parsed.get("confidence") or 0.5)
+
+    try:
+        cls = llm.classify_role(p.raw_title, related_posting_id=p.id)
+        if cls.validation_ok:
+            p.normalized_role = cls.parsed.get("normalized_role") or p.raw_title
+            p.role_bucket = cls.parsed.get("bucket")
+    except Exception:
+        pass
+
+    return "success"
+
+
 def _process_run(run_id: int, *, yard_ids: list[int] | None, refresh_all: bool) -> None:
     """The body of an ingestion run. Synchronous; called both inline and in a thread."""
+    started = time.perf_counter()
     explicit_scope = yard_ids is not None
     scope_codes, in_range_cl_ids = _resolve_scope(yard_ids)
 
@@ -118,63 +184,18 @@ def _process_run(run_id: int, *, yard_ids: list[int] | None, refresh_all: bool) 
     for pid in posting_ids:
         try:
             with session_scope() as s:
-                p = s.get(JobPosting, pid)
-                if p is None:
-                    # No posting row to extract from — treat as a transport-style failure
-                    # (the work item itself is broken, not an honest no-wage outcome).
-                    transport_failed += 1
-                    processed += 1
-                    continue
-                html = _load_html(p)
-                if not html:
-                    # Missing raw HTML on disk = infrastructure problem, not a no-wage hit.
-                    transport_failed += 1
-                    processed += 1
-                    continue
-
-                try:
-                    extr = llm.extract_wage(html, p.raw_title, related_posting_id=p.id)
-                except Exception:
-                    # LLM call raised → transport failure (network, 4xx/5xx, parse).
-                    transport_failed += 1
-                    processed += 1
-                    continue
-
-                if not extr.validation_ok:
-                    # Schema-validation failed → the model's output was unusable; that's
-                    # a transport-class problem (bad JSON, missing required keys, etc.).
-                    transport_failed += 1
-                    processed += 1
-                    continue
-
-                wage_low_val = extr.parsed.get("wage_low")
-                if not wage_low_val:
-                    # Model parsed cleanly but reported no wage on the page. This is the
-                    # Home Depot / non-mandated-state reality — record it distinctly.
-                    no_wage_found += 1
-                    processed += 1
-                    continue
-
-                p.wage_low = float(wage_low_val)
-                p.wage_high = float(extr.parsed.get("wage_high", wage_low_val))
-                p.wage_unit = extr.parsed.get("wage_unit") or "hourly"
-                p.extraction_confidence = float(extr.parsed.get("confidence") or 0.5)
-
-                try:
-                    cls = llm.classify_role(p.raw_title, related_posting_id=p.id)
-                    if cls.validation_ok:
-                        p.normalized_role = cls.parsed.get("normalized_role") or p.raw_title
-                        p.role_bucket = cls.parsed.get("bucket")
-                        p.classification_confidence = float(cls.parsed.get("confidence") or 0.5)
-                except Exception:
-                    pass
-
-                success += 1
-                processed += 1
+                outcome = _extract_one(s, pid)
         except Exception:
-            # Outermost catch — DB hiccup, etc. Bucket as transport failure.
+            # Outermost catch — DB hiccup, session error, etc. Bucket as transport.
+            outcome = "transport"
+
+        if outcome == "success":
+            success += 1
+        elif outcome == "no_wage":
+            no_wage_found += 1
+        else:
             transport_failed += 1
-            processed += 1
+        processed += 1
 
         # Periodically flush progress so the UI's auto-refresh has fresh numbers.
         if processed % PROGRESS_FLUSH_EVERY == 0 or processed == total:
@@ -185,7 +206,27 @@ def _process_run(run_id: int, *, yard_ids: list[int] | None, refresh_all: bool) 
                 run.extraction_no_wage_found = no_wage_found
                 run.extraction_failed = transport_failed
 
+        # Coarser INFO progress log every LOG_PROGRESS_EVERY postings (or on the
+        # final item) so an operator following /admin/logs sees forward motion
+        # without a wall of lines.
+        if processed and (processed % LOG_PROGRESS_EVERY == 0 or processed == total):
+            log.info(
+                "extract progress: %d/%d processed (success=%d no_wage=%d failed=%d)",
+                processed, total, success, no_wage_found, transport_failed,
+            )
+
+    # Write wage snapshots BEFORE the narrative regenerates so the narrative
+    # query (`national_facts`) and the snapshot query both read the same just-
+    # extracted state. Snapshot failure shouldn't fail the run either.
+    try:
+        with session_scope() as s:
+            write_wage_snapshots(s)
+    except Exception as exc:
+        log.warning("wage snapshot write failed: %s: %s", type(exc).__name__, exc)
+
     # Regenerate the national narrative against the current full metric store.
+    log.info("regenerating national narrative")
+    narrative_failure: str | None = None
     try:
         with session_scope() as s:
             facts = national_facts(s)
@@ -198,9 +239,13 @@ def _process_run(run_id: int, *, yard_ids: list[int] | None, refresh_all: bool) 
                     grounding=facts,
                 )
             )
-    except Exception:
-        # Narrative failure shouldn't fail the whole run — extraction work is the meat.
-        pass
+    except Exception as exc:
+        # Narrative failure shouldn't fail the whole run — extraction work is the
+        # meat. Used to be a silent swallow; now we log loudly AND stamp the
+        # ScrapeRun row so operators see narrative regressions on /admin/logs
+        # AND on /admin/runs/{id} without having to combine the two surfaces.
+        log.warning("narrative generation failed: %s: %s", type(exc).__name__, exc)
+        narrative_failure = f"{type(exc).__name__}: {exc}"[:200]
 
     with session_scope() as s:
         run = s.get(ScrapeRun, run_id)
@@ -223,6 +268,16 @@ def _process_run(run_id: int, *, yard_ids: list[int] | None, refresh_all: bool) 
             f"scope={scope_label} processed={processed} "
             f"ok={success} no-wage={no_wage_found} failed={transport_failed}"
         )
+        if narrative_failure:
+            run.notes += f" | narrative_failed: {narrative_failure}"
+
+    duration = time.perf_counter() - started
+    # Wages is success+no_wage_found — both are clean LLM parses, and that's the
+    # number an operator cares about for "how much new info did this run yield".
+    log.info(
+        "run_ingestion complete: postings=%d wages=%d duration=%.1fs",
+        processed, success + no_wage_found, duration,
+    )
 
 
 def run_ingestion(
@@ -236,28 +291,40 @@ def run_ingestion(
 
     `async_mode=True` creates the run row, kicks off a daemon thread, and returns
     immediately so the admin UI can render a progress page that auto-refreshes.
+
+    The entire run runs inside an :func:`operation_context` so every log line
+    emitted by ``_process_run`` (and the LLM calls it makes) carries the same
+    ``op_id`` tag. Daemon threads inherit the parent's ``contextvars`` — see
+    the docstring on ``app.log_context`` for why that's correct here.
     """
-    if yard_ids is not None and len(yard_ids) == 0:
-        return _create_run(
-            triggered_by, scope_codes="",
-            status="failed", finished=True, notes="no yards selected",
+    with operation_context("ingest"):
+        log.info(
+            "run_ingestion starting (yard_ids=%s, triggered_by=%s)",
+            yard_ids, triggered_by,
         )
 
-    scope_codes, _ = _resolve_scope(yard_ids)
-    run_id = _create_run(triggered_by, scope_codes, status="running")
+        if yard_ids is not None and len(yard_ids) == 0:
+            log.warning("run_ingestion: no yards selected; marking failed and returning")
+            return _create_run(
+                triggered_by, scope_codes="",
+                status="failed", finished=True, notes="no yards selected",
+            )
 
-    if async_mode:
-        t = threading.Thread(
-            target=_process_run,
-            args=(run_id,),
-            kwargs={"yard_ids": yard_ids, "refresh_all": refresh_all},
-            daemon=True,
-        )
-        t.start()
+        scope_codes, _ = _resolve_scope(yard_ids)
+        run_id = _create_run(triggered_by, scope_codes, status="running")
+
+        if async_mode:
+            t = threading.Thread(
+                target=_process_run,
+                args=(run_id,),
+                kwargs={"yard_ids": yard_ids, "refresh_all": refresh_all},
+                daemon=True,
+            )
+            t.start()
+            return run_id
+
+        _process_run(run_id, yard_ids=yard_ids, refresh_all=refresh_all)
         return run_id
-
-    _process_run(run_id, yard_ids=yard_ids, refresh_all=refresh_all)
-    return run_id
 
 
 def extract_postings_by_ids(posting_ids: list[int]) -> dict[str, int]:
@@ -281,48 +348,16 @@ def extract_postings_by_ids(posting_ids: list[int]) -> dict[str, int]:
         processed += 1
         try:
             with session_scope() as s:
-                p = s.get(JobPosting, pid)
-                if p is None:
-                    # Stale ID — no posting to extract. Treat as transport-style failure
-                    # so it's surfaced as a real bug (likely a race or deletion).
-                    transport_failed += 1
-                    continue
-                html = _load_html(p)
-                if not html:
-                    # Missing raw HTML on disk = infrastructure problem, not a no-wage hit.
-                    transport_failed += 1
-                    continue
-                try:
-                    extr = llm.extract_wage(html, p.raw_title, related_posting_id=p.id)
-                except Exception:
-                    # LLM call raised → network/4xx/5xx/parse exception.
-                    transport_failed += 1
-                    continue
-                if not extr.validation_ok:
-                    # Model responded but the response failed schema validation. That's
-                    # a bug surface (bad JSON, missing keys), not an honest no-wage outcome.
-                    transport_failed += 1
-                    continue
-                wage_low_val = extr.parsed.get("wage_low")
-                if not wage_low_val:
-                    # Clean LLM parse but no wage disclosed on the page. Reality, not a bug.
-                    no_wage_found += 1
-                    continue
-                p.wage_low = float(wage_low_val)
-                p.wage_high = float(extr.parsed.get("wage_high", wage_low_val))
-                p.wage_unit = extr.parsed.get("wage_unit") or "hourly"
-                p.extraction_confidence = float(extr.parsed.get("confidence") or 0.5)
-                try:
-                    cls = llm.classify_role(p.raw_title, related_posting_id=p.id)
-                    if cls.validation_ok:
-                        p.normalized_role = cls.parsed.get("normalized_role") or p.raw_title
-                        p.role_bucket = cls.parsed.get("bucket")
-                        p.classification_confidence = float(cls.parsed.get("confidence") or 0.5)
-                except Exception:
-                    pass
-                success += 1
+                outcome = _extract_one(s, pid)
         except Exception:
             # Outermost catch — DB hiccup, session error, etc. Bucket as transport.
+            outcome = "transport"
+
+        if outcome == "success":
+            success += 1
+        elif outcome == "no_wage":
+            no_wage_found += 1
+        else:
             transport_failed += 1
     return {
         "processed": processed,

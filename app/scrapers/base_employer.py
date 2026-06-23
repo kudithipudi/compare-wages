@@ -59,9 +59,7 @@ import json
 import logging
 import os
 import re
-import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterator
@@ -220,41 +218,6 @@ def check_robots(
     return _fetch_robots_decision(robots_url, target_path, user_agent, client_factory)
 
 
-class _RateLimiter:
-    """Thread-safe minimum-gap rate limiter.
-
-    Used by the concurrent detail-page path so the polite-pause inherited from
-    ``rate_limit_hz`` applies *globally* across worker threads, not per-thread.
-    Each thread calls :meth:`acquire` immediately before issuing a request;
-    the call sleeps just long enough to enforce ``min_gap`` seconds between
-    successive returns from ``acquire`` across all threads.
-
-    Equivalent to ``threading.Semaphore`` + a refill timer, but simpler to
-    reason about under contention: the lock is held only long enough to read
-    + advance ``_next_allowed``, and threads sleep *outside* the lock so a
-    slow thread can't block a fast one.
-    """
-
-    def __init__(self, min_gap: float) -> None:
-        self._min_gap = max(min_gap, 0.0)
-        self._lock = threading.Lock()
-        self._next_allowed = 0.0
-
-    def acquire(self) -> None:
-        if self._min_gap <= 0.0:
-            return
-        with self._lock:
-            now = time.monotonic()
-            wait = self._next_allowed - now
-            if wait <= 0.0:
-                self._next_allowed = now + self._min_gap
-                wait = 0.0
-            else:
-                self._next_allowed += self._min_gap
-        if wait > 0.0:
-            time.sleep(wait)
-
-
 class BaseEmployerScraper(Scraper):
     """Shared base for the four employer-careers scrapers.
 
@@ -286,33 +249,6 @@ class BaseEmployerScraper(Scraper):
     # --- subclasses MAY override ---
     user_agent: str = USER_AGENT
     rate_limit_hz: float = 1.0
-    # How many detail-page fetches may be in flight simultaneously.
-    #
-    # The default of ``1`` preserves the historical sequential behavior bit-
-    # for-bit. A subclass MAY opt into parallel detail-page fetches by
-    # overriding this to a small integer (4 has been observed to give ~4x
-    # throughput on Home Depot / Costco without tripping their edge defenses).
-    #
-    # When ``detail_concurrency > 1`` the live path:
-    #   * Still uses a single shared Playwright browser + context.
-    #   * Spawns one ``page`` per worker thread (Playwright pages are NOT safe
-    #     to share across threads; contexts can hand out additional pages
-    #     concurrently).
-    #   * Throttles all detail-page navigations through ONE shared rate limiter
-    #     so the polite ``self.rate_limit_hz`` is enforced globally across
-    #     threads, not per-thread. 4 threads at ``rate_limit_hz=1.0`` still
-    #     average 1 req/sec total; concurrency just removes the idle time when
-    #     individual nav timeouts or extraction parsing happens to be slow.
-    #   * Tracks the per-keyword failure budget under a ``threading.Lock`` so a
-    #     keyword that has burned 3 detail failures stops accepting new
-    #     dispatches even if its remaining links are already in worker queues.
-    #
-    # If a site is rate-limit-flaky (Akamai / Imperva style "look at how often
-    # you hit me" defenses, e.g. Walmart in our experience) do NOT bump this
-    # above 1: concurrency amplifies request rate even with the shared
-    # limiter, because the limiter spaces requests at exactly ``1/rate_limit_hz``
-    # rather than introducing jitter.
-    detail_concurrency: int = 1
     fixture_dir: Path = Path(__file__).parent / "fixtures"
     title_rejects: frozenset[str] = frozenset()
     detail_title_selectors: list[str] = [
@@ -585,19 +521,10 @@ class BaseEmployerScraper(Scraper):
                         "or selector drift (no card matched any candidate selector)."
                     )
 
-                # 2. Walk detail pages with per-keyword failure budgeting. The
-                #    sequential and concurrent paths are kept separate so the
-                #    ``detail_concurrency == 1`` default behaves identically to
-                #    the pre-concurrency code (no threads, no rate limiter — a
-                #    plain ``time.sleep(pause)`` between navigations).
-                if self.detail_concurrency <= 1:
-                    yield from self._walk_details_sequential(
-                        page, all_links[:max_postings], pause, PlaywrightTimeoutError
-                    )
-                else:
-                    yield from self._walk_details_concurrent(
-                        context, all_links[:max_postings], pause, PlaywrightTimeoutError
-                    )
+                # 2. Walk detail pages with per-keyword failure budgeting.
+                yield from self._walk_details_sequential(
+                    page, all_links[:max_postings], pause, PlaywrightTimeoutError
+                )
             finally:
                 try:
                     browser.close()
@@ -611,10 +538,13 @@ class BaseEmployerScraper(Scraper):
         pause: float,
         timeout_exc_cls: type[BaseException],
     ) -> Iterator[ScrapedPosting]:
-        """Original single-page, single-thread detail-walk path.
+        """Single-page, single-thread detail-walk path.
 
-        Kept byte-for-byte equivalent to the pre-concurrency loop so the
-        default ``detail_concurrency=1`` behavior is unchanged.
+        Iterates over ``(keyword, href)`` pairs, loading each detail page
+        through :meth:`_load_detail_with_retry`. Maintains a per-keyword
+        consecutive-failure counter; once a keyword burns 3 failures we stop
+        walking that keyword's remaining links so one bad keyword can't burn
+        the whole budget.
         """
         consecutive_failures: dict[str, int] = {kw: 0 for kw, _ in links}
         skipped_keywords: set[str] = set()
@@ -646,138 +576,6 @@ class BaseEmployerScraper(Scraper):
             consecutive_failures[kw] = 0
             self.last_run_telemetry["per_keyword_yielded"][kw] += 1
             yield posting
-
-    def _walk_details_concurrent(
-        self,
-        context,
-        links: list[tuple[str, str]],
-        pause: float,
-        timeout_exc_cls: type[BaseException],
-    ) -> Iterator[ScrapedPosting]:
-        """Threaded detail-walk path.
-
-        Constraints (see ``detail_concurrency`` docstring on the class):
-          * One Playwright ``page`` per worker thread, opened from the shared
-            ``context``. Pages are NOT shared across threads.
-          * A single :class:`_RateLimiter` enforces ``self.rate_limit_hz``
-            globally — the polite-pause is per-site, not per-thread.
-          * Per-keyword failure budget is shared state under a lock. Once a
-            keyword hits 3 failures, in-flight tasks complete but no new tasks
-            for that keyword are dispatched.
-          * Yield order is "as completed" — telemetry counters are still
-            correct, but postings will not appear in the order they were
-            discovered on the search page.
-        """
-        limiter = _RateLimiter(pause)
-        consecutive_failures: dict[str, int] = {kw: 0 for kw, _ in links}
-        skipped_keywords: set[str] = set()
-        budget_lock = threading.Lock()
-        # Defensive seeding (see note on the sequential path).
-        for kw, _ in links:
-            self.last_run_telemetry["per_keyword_yielded"].setdefault(kw, 0)
-            self.last_run_telemetry["per_keyword_errors"].setdefault(kw, 0)
-
-        def _should_skip(kw: str) -> bool:
-            with budget_lock:
-                return kw in skipped_keywords
-
-        def _record_failure(kw: str) -> None:
-            with budget_lock:
-                consecutive_failures[kw] += 1
-                self.last_run_telemetry["per_keyword_errors"][kw] += 1
-                if (
-                    consecutive_failures[kw] >= 3
-                    and kw not in skipped_keywords
-                ):
-                    skipped_keywords.add(kw)
-                    self._note(
-                        f"3 consecutive failures on keyword '{kw}' — skipping remainder"
-                    )
-
-        def _record_success(kw: str) -> None:
-            with budget_lock:
-                consecutive_failures[kw] = 0
-                self.last_run_telemetry["per_keyword_yielded"][kw] += 1
-
-        def _worker(kw: str, href: str) -> tuple[str, ScrapedPosting | None]:
-            # Bail before opening a page if this keyword has already burned
-            # its budget while we were queued.
-            if _should_skip(kw):
-                return kw, None
-            detail_url = self._absolutize(href)
-            page = context.new_page()
-            try:
-                return kw, self._load_detail_threaded(
-                    page, detail_url, timeout_exc_cls, limiter
-                )
-            finally:
-                try:
-                    page.close()
-                except Exception as exc:  # noqa: BLE001
-                    self._note(f"page close failed ({type(exc).__name__}: {exc})")
-
-        workers = max(1, int(self.detail_concurrency))
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [pool.submit(_worker, kw, href) for kw, href in links]
-            for fut in as_completed(futures):
-                try:
-                    kw, posting = fut.result()
-                except Exception as exc:  # noqa: BLE001
-                    # Defensive: _worker shouldn't raise (errors come back as
-                    # ``None``) but if it does, don't swallow silently.
-                    self._note(
-                        f"detail worker raised ({type(exc).__name__}: {exc})"
-                    )
-                    continue
-                if posting is None:
-                    _record_failure(kw)
-                    continue
-                _record_success(kw)
-                yield posting
-
-    def _load_detail_threaded(
-        self,
-        page,
-        detail_url: str,
-        timeout_exc_cls: type[BaseException],
-        limiter: "_RateLimiter",
-    ) -> ScrapedPosting | None:
-        """Detail-page loader used by the concurrent path.
-
-        Same retry policy (3 attempts, 1s -> 3s -> 9s backoff) as the
-        sequential :meth:`_load_detail_with_retry`, but the polite-pause is
-        enforced through a *shared* rate limiter so it applies globally across
-        worker threads. Backoff sleeps inside this thread don't block other
-        threads — they just hold this single worker.
-        """
-        delay = 1.0
-        for attempt in range(3):
-            limiter.acquire()
-            try:
-                page.goto(detail_url, wait_until="domcontentloaded", timeout=30_000)
-                html = page.content()
-                posting = self._extract_posting(page, html, detail_url)
-                if posting is None:
-                    self._note(f"_extract_posting returned None for {detail_url}")
-                    return None
-                return posting
-            except timeout_exc_cls as exc:
-                if attempt < 2:
-                    self._note(
-                        f"timeout on {detail_url} (attempt {attempt + 1}); "
-                        f"retrying in {delay}s"
-                    )
-                    time.sleep(delay)
-                    delay *= 3
-                    continue
-                self._note(f"timeout on {detail_url} after 3 attempts ({exc})")
-                return None
-            except Exception as exc:  # noqa: BLE001
-                self._note(
-                    f"failed to load {detail_url} ({type(exc).__name__}: {exc}); skipping"
-                )
-                return None
-        return None
 
     def _load_detail_with_retry(
         self,

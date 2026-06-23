@@ -24,11 +24,11 @@
       </nav>
 
       <div class="flex items-center gap-3">
-        <div class="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-xs text-emerald-800">
-          <span class="fresh-dot"></span>
+        <div class="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs {{ last_observation_at | freshness_class }}">
+          <span class="{{ last_observation_at | freshness_dot_class }}"></span>
           <span class="font-semibold num">{{ total_observations }}</span>
-          <span class="text-emerald-700/80">live observations</span>
-          <span class="text-emerald-700/40">·</span>
+          <span class="opacity-80">wages from {{ total_postings }} postings</span>
+          <span class="opacity-40">·</span>
           <span>refreshed {{ last_observation_at | relative_time }}</span>
         </div>
       </div>
@@ -230,45 +230,15 @@
         <div class="mt-2 text-xl font-semibold text-slate-900 leading-tight">Sources &amp;<br/>confidence</div>
       </aside>
       <div class="lg:border-l lg:border-slate-200 lg:pl-8 space-y-4 text-slate-600 leading-relaxed">
-        <p>Every posting carries a source tier, in descending order of trust:</p>
-        <div class="card overflow-hidden">
-          <table class="w-full text-sm">
-            <thead class="bg-slate-50">
-              <tr class="text-left text-[10px] uppercase tracking-wider font-semibold text-slate-500 border-b border-slate-200">
-                <th class="px-5 py-3">Tier</th>
-                <th class="px-3 py-3">Definition</th>
-                <th class="px-5 py-3 text-right">Weight</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-100">
-              <tr>
-                <td class="px-5 py-3"><span class="pill pill-emerald">Employer site</span></td>
-                <td class="px-3 py-3 text-slate-700">Posted directly on the operator's careers domain.</td>
-                <td class="px-5 py-3 text-right num font-semibold text-slate-900">1.00</td>
-              </tr>
-              <tr>
-                <td class="px-5 py-3"><span class="pill pill-sky">Aggregator</span></td>
-                <td class="px-3 py-3 text-slate-700">Indeed, LinkedIn, ZipRecruiter mirrors.</td>
-                <td class="px-5 py-3 text-right num font-semibold text-slate-900">0.75</td>
-              </tr>
-              <tr>
-                <td class="px-5 py-3"><span class="pill pill-amber">Press</span></td>
-                <td class="px-3 py-3 text-slate-700">Local news reporting on wage decisions.</td>
-                <td class="px-5 py-3 text-right num font-semibold text-slate-900">0.50</td>
-              </tr>
-              <tr>
-                <td class="px-5 py-3"><span class="pill pill-slate">Sample</span></td>
-                <td class="px-3 py-3 text-slate-700">Seeded for day-one demonstration.</td>
-                <td class="px-5 py-3 text-right num font-semibold text-slate-900">0.30</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <p>
+          Today every live posting carries <code class="num text-slate-900">employer_owned</code> — scraped directly
+          from the operator's careers domain. Seed postings predate live scrapes and are excluded from all dashboards.
+        </p>
         <p>
           Each row also carries an <em>extraction confidence</em> from
           <span class="num font-semibold text-slate-900">0.0</span> to
           <span class="num font-semibold text-slate-900">1.0</span> —
-          how certain the LLM extractor was about wage values pulled from posting text. Both contribute to the thin
+          how certain the LLM extractor was about wage values pulled from posting text. It drives the thin
           progress bars visible in each yard dossier.
         </p>
       </div>

@@ -6,11 +6,9 @@ gap by querying a plain web search engine for each competitor and extracting
 job titles from the result snippets. This module is the thin search layer the
 orchestrator calls into.
 
-Backends are pluggable via the ``SEARCH_BACKEND`` env var (``ddg`` default,
-``tavily``, or ``brave``). The default uses the ``duckduckgo-search`` PyPI
-package — no API key required, which keeps the demo-mode story intact
-(``USE_MOCK_LLM=true`` plus zero secrets). Tavily / Brave kick in only when
-``SEARCH_API_KEY`` is set; otherwise we log a warning and fall back to ddg.
+Backed by DuckDuckGo via the ``duckduckgo-search`` PyPI package — no API key
+required, which keeps the demo-mode story intact (``USE_MOCK_LLM=true`` plus
+zero secrets).
 
 Throttle: 1 req/sec inside a single discovery run (module-level last-call
 timestamp; no persistent state). Errors return ``[]`` — discovery should
@@ -32,7 +30,6 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any
 
 from app.config import get_settings
 
@@ -211,7 +208,7 @@ def _throttle() -> None:
     _LAST_CALL_TS = time.time()
 
 
-# ------------------------- backends -------------------------
+# ------------------------- backend -------------------------
 
 
 def _search_ddg(query: str, max_results: int) -> list[dict[str, str]]:
@@ -235,54 +232,6 @@ def _search_ddg(query: str, max_results: int) -> list[dict[str, str]]:
     return out
 
 
-def _search_tavily(query: str, max_results: int, api_key: str) -> list[dict[str, str]]:
-    """Tavily search API. Hits the public REST endpoint with the user's key."""
-    import httpx
-
-    body = {
-        "api_key": api_key,
-        "query": query,
-        "max_results": max_results,
-        "search_depth": "basic",
-    }
-    with httpx.Client(timeout=10.0) as client:
-        r = client.post("https://api.tavily.com/search", json=body)
-        r.raise_for_status()
-        data = r.json()
-    out: list[dict[str, str]] = []
-    for row in data.get("results", []):
-        out.append({
-            "title": str(row.get("title", "")),
-            "snippet": str(row.get("content", "")),
-            "url": str(row.get("url", "")),
-        })
-    return out
-
-
-def _search_brave(query: str, max_results: int, api_key: str) -> list[dict[str, str]]:
-    """Brave Search API."""
-    import httpx
-
-    headers = {"X-Subscription-Token": api_key, "Accept": "application/json"}
-    params = {"q": query, "count": max_results}
-    with httpx.Client(timeout=10.0) as client:
-        r = client.get(
-            "https://api.search.brave.com/res/v1/web/search",
-            headers=headers,
-            params=params,
-        )
-        r.raise_for_status()
-        data = r.json()
-    out: list[dict[str, str]] = []
-    for row in (data.get("web", {}) or {}).get("results", []) or []:
-        out.append({
-            "title": str(row.get("title", "")),
-            "snippet": str(row.get("description", "")),
-            "url": str(row.get("url", "")),
-        })
-    return out
-
-
 # ------------------------- public API -------------------------
 
 
@@ -290,11 +239,11 @@ def search(query: str, max_results: int = 15) -> list[dict[str, str]]:
     """Run a single web search and return ``[{title, snippet, url}, ...]``.
 
     Mock mode (``USE_MOCK_LLM=true``) returns a deterministic per-competitor
-    fixture — no network. Live mode honors ``SEARCH_BACKEND`` (``ddg`` default;
-    ``tavily`` / ``brave`` need ``SEARCH_API_KEY``). Errors return an empty list
-    so a flaky backend doesn't crash the discovery orchestrator. Throttled to
-    1 request per second across all calls in this process; results are cached
-    on disk for 1 hour keyed on ``sha256(query)``.
+    fixture — no network. Live mode hits DuckDuckGo via the
+    ``duckduckgo-search`` package. Errors return an empty list so a flaky
+    backend doesn't crash the discovery orchestrator. Throttled to 1 request
+    per second across all calls in this process; results are cached on disk
+    for 1 hour keyed on ``sha256(query)``.
     """
     settings = get_settings()
 
@@ -309,27 +258,11 @@ def search(query: str, max_results: int = 15) -> list[dict[str, str]]:
 
     _throttle()
 
-    backend = (settings.search_backend or "ddg").lower()
-    api_key = settings.search_api_key or ""
-
     try:
-        if backend == "tavily" and api_key:
-            results = _search_tavily(query, max_results, api_key)
-        elif backend == "brave" and api_key:
-            results = _search_brave(query, max_results, api_key)
-        else:
-            if backend in ("tavily", "brave") and not api_key:
-                log.warning(
-                    "web_search: SEARCH_BACKEND=%s but SEARCH_API_KEY is empty — "
-                    "falling back to ddg",
-                    backend,
-                )
-            results = _search_ddg(query, max_results)
+        results = _search_ddg(query, max_results)
     except Exception as e:
         # Never crash the orchestrator on a search failure. Log + return empty.
-        log.warning(
-            "web_search: backend=%s query=%r failed: %s", backend, query, e
-        )
+        log.warning("web_search: query=%r failed: %s", query, e)
         return []
 
     _cache_put(query, results)

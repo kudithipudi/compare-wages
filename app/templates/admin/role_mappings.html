@@ -16,6 +16,9 @@
           <span class="text-slate-300 mx-1">·</span>
           map competitor job titles to Copart role buckets
         </p>
+        <p class="text-sm text-slate-500 mt-1">
+          Scrapers ignore mappings below 70% confidence — bar shows the cutoff.
+        </p>
       </div>
       <div class="flex items-center gap-2">
         <a href="{{ prefix }}/admin/role-discovery" class="btn btn-ghost"
@@ -98,12 +101,23 @@
           </td>
           <td class="px-4 py-3 text-right">
             {% set pct = (r.confidence * 100) | round | int %}
+            {% set below_cutoff = r.confidence < 0.7 %}
             <div class="inline-flex items-center gap-2 justify-end">
-              <div class="w-20 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+              {# Confidence bar with a red marker line at the 70% scraper cutoff.
+                 The marker uses left: 70% on a relatively-positioned track so it
+                 lines up regardless of the bar's pixel width. #}
+              <div class="relative w-20 h-1.5 bg-slate-100 rounded-full overflow-hidden"
+                   title="Scrapers use only mappings with confidence >= 70%">
                 <div class="h-full {% if pct >= 80 %}bg-emerald-500{% elif pct >= 60 %}bg-amber-500{% else %}bg-rose-500{% endif %}"
                      style="width: {{ pct }}%"></div>
+                <div class="absolute top-0 bottom-0 w-px bg-rose-600"
+                     style="left: 70%"
+                     aria-hidden="true"></div>
               </div>
-              <span class="text-xs num w-10 text-right text-slate-700 font-medium">{{ pct }}%</span>
+              <span class="text-xs num w-10 text-right {% if below_cutoff %}text-rose-700{% else %}text-slate-700{% endif %} font-medium">{{ pct }}%</span>
+              {% if below_cutoff %}
+                <span class="pill pill-rose" title="Below the 70% scraper cutoff — this mapping is ignored by scrape queries.">below cutoff</span>
+              {% endif %}
             </div>
           </td>
           <td class="px-4 py-3 pr-5 text-right">
